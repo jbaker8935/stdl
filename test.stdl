@@ -1,0 +1,21 @@
+State A
+    OnEntry
+        / Action A
+    OnExit
+        / Action B
+    - Event A [Guard Condition A]
+        / Action C
+        / Action D        
+        -> State B
+    - Event A [Guard Condition B]
+        / Action E
+        -> State B        
+State B
+    - Event B
+        -> State C
+State C
+    Initial
+        -> Substate D
+    Substate D
+        - Action F
+            -> State A

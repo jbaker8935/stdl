@@ -1,0 +1,66 @@
+// Example Media Player State Machine stdl
+
+// Initial state: Player is stopped
+Stopped
+  OnEntry
+    / stopPlayback // Ensure hardware is stopped
+    / displayStoppedUI
+  - play [trackAvailable] // Event with a guard
+    / prepareTrack
+    -> Playing // Transition to Playing state
+  - play [!trackAvailable]
+    / displayError "No track selected"
+    // Stay in Stopped state
+
+// Main active state: Player is playing media
+Playing
+  OnEntry
+    / startPlayback // Start or resume hardware playback
+    / displayPlayingUI
+  OnExit
+    / pausePlayback // Pause hardware when leaving this state (e.g., on pause, stop)
+  - buffering_needed
+    / startBuffering // Action before transitioning
+    -> Buffering // Transition to Buffering state
+  - pause
+    -> Paused // Transition to Paused state
+  - stop
+    -> Stopped // Transition back to Stopped state
+  - end_of_track
+    / loadNextTrack // Action before transitioning
+    -> Playing // Loop back to playing (or could go to Stopped if playlist ends)
+  - error [isCritical]
+    / logCriticalError
+    -> Stopped
+  - error [!isCritical]
+    / logMinorError
+    // Stay in Playing state, maybe show a temporary warning
+
+  // Nested state example: Handling buffering within Playing
+  Buffering
+    OnEntry
+      / showBufferingIndicator
+      / pausePlayback // Temporarily pause while buffering
+    OnExit
+      / hideBufferingIndicator
+      / startPlayback // Resume playback after buffering
+    - buffer_full
+      -> Playing // Go back to the parent state's context (Playing)
+    - timeout
+      / logBufferingTimeout
+      -> Stopped // Transition out on error
+    - cancel_buffering // Event specific to the substate
+      -> Playing // Go back to parent state
+
+// Paused state: Playback is temporarily suspended
+Paused
+  OnEntry
+    / displayPausedUI
+  - play // This is the 'resume' action
+    / resumePlayback // Specific action for resuming
+    -> Playing
+  - stop
+    -> Stopped
+  - seek [isValidPosition]
+     / updateSeekPosition
+     // Stay in Paused state after seeking

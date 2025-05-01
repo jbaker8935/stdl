@@ -1,0 +1,164 @@
+// Dishwasher State Machine Example stdl
+
+// Initial state: Powered off
+Off
+  OnEntry
+    / displayOff
+    / ensurePowerOff
+    / unlockDoor // Ensure door is unlocked when off
+  - power_on
+    -> Idle
+
+// Waiting for user interaction
+Idle
+  OnEntry
+    / displayIdleScreen
+    / unlockDoor // Ensure door unlocked in idle state
+  - open_door
+    -> Loading
+  - select_program [program == 'quick']
+    / setProgramQuick
+    -> Ready // Assume door is closed if program selected from Idle
+  - select_program [program == 'normal']
+    / setProgramNormal
+    -> Ready
+  - select_program [program == 'heavy']
+    / setProgramHeavy
+    -> Ready
+  - power_off
+    -> Off
+
+// Door is open, user can load/unload or select program
+Loading
+  OnEntry
+    / turnOnLight
+    / displayLoadMessage
+  OnExit
+    / turnOffLight
+  - close_door [programSelected]
+    -> Ready
+  - close_door [!programSelected]
+    -> Idle
+  - select_program [program == 'quick']
+    / setProgramQuick // Action updates internal state, stays Loading
+  - select_program [program == 'normal']
+    / setProgramNormal
+  - select_program [program == 'heavy']
+    / setProgramHeavy
+
+// Door closed, program selected, ready to start
+Ready
+  OnEntry
+    / lockDoor
+    / displayProgramSelected
+  - start_wash
+    -> Washing
+  - open_door // User changed mind before starting
+    / unlockDoor
+    -> Loading
+  - cancel_program
+    -> Idle // Go back to idle state
+  - power_off
+    -> Off
+
+// Washing cycle active (could be pre-wash, main, rinse internally)
+Washing
+  OnEntry
+    / startCycleTimer
+    / beginPreWash // Example action sequence
+    / fillWater
+    / heatWater(50)
+    / displayWashingStatus
+  OnExit
+    / stopCycleTimer // If transitioning out prematurely
+  - wash_segment_complete [next == 'main_wash']
+    / beginMainWash
+    / drainWater
+    / fillWater
+    / addDetergent
+    / heatWater(65)
+    // Stay in Washing state, update display/timer
+  - wash_segment_complete [next == 'rinse']
+    / beginRinse
+    / drainWater
+    / fillWater
+    / circulateWater
+    // Stay in Washing state
+  - wash_cycle_finished // All wash/rinse segments done
+    / drainWater
+    -> Drying // Transition to Drying phase
+  - pause_wash
+    -> Paused
+  - cancel_wash
+    / stopAllActuators
+    / drainWater
+    -> Idle // Go back to Idle, Idle's OnEntry will unlock.
+  - error_detected [isCritical]
+    / logCriticalError "Wash cycle failed"
+    -> Error
+  - power_off // Power loss during cycle
+    / emergencyStop
+    -> Off // State machine stops abruptly
+
+// Drying cycle active
+Drying
+  OnEntry
+    / startDryingHeater
+    / startCirculationFan
+    / displayDryingStatus
+  OnExit
+    / stopDryingHeater
+    / stopCirculationFan
+  - drying_time_elapsed
+    -> Complete
+  - cancel_drying // Allow cancelling drying?
+    / stopAllActuators
+    -> Complete // Consider it done if drying cancelled
+  - error_detected [isCritical]
+    / logCriticalError "Drying cycle failed"
+    -> Error
+  - power_off
+    / emergencyStop
+    -> Off
+
+// Cycle is complete
+Complete
+  OnEntry
+    / playFinishedSound
+    / displayCompleteMessage
+    / unlockDoor
+  - open_door
+    -> Loading // Ready for next load
+  - power_off
+    -> Off
+  - any_button_press // If user presses something else
+    -> Idle // Go back to idle state
+
+// Cycle paused by user
+Paused
+  OnEntry
+    / pauseAllActuators
+    / displayPausedStatus
+  OnExit
+    / resumeAllActuators // Prepare to resume
+  - resume_wash
+    -> Washing // Go back to washing state
+  - cancel_wash
+    / stopAllActuators
+    / drainWater
+    -> Idle
+  - power_off
+    / emergencyStop
+    -> Off
+
+// Unrecoverable error state
+Error
+  OnEntry
+    / stopAllActuators
+    / displayErrorCode
+    / beepAlarm
+    / lockDoor // Keep door locked in error state for safety
+  - acknowledge_error // e.g., press cancel button
+    -> Idle // Go back to idle, user needs to decide next step
+  - power_off
+    -> Off

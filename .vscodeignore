@@ -1,0 +1,9 @@
+.vscode/**
+.vscode-test/**
+# node_modules/** # Commented out to include dependencies
+# out/**  # Commented out to include compiled JavaScript files
+src/**
+tsconfig.json
+webpack.config.js
+yarn.lock
+*.vsix
