@@ -1,0 +1,67 @@
+// Vending Machine State Machine Example stdl
+
+// Waiting for user to insert coins
+Idle
+  OnEntry
+    / displayIdleMessage
+  - coin_inserted [amount > 0]
+    / acceptCoin
+    -> Selection
+  - service_mode
+    / lockMachine
+    -> Error
+
+// User selects item or inserts more coins
+Selection
+  OnEntry
+    / displaySelectionPrompt
+  - item_selected [stock[selectedItem] > 0 && amount >= price[selectedItem]]
+    / dispenseItem(selectedItem)
+    -> Dispensing
+  - item_selected [stock[selectedItem] == 0]
+    -> OutOfStock
+  - coin_inserted [amount < price[selectedItem]]
+    / acceptCoin
+    -> Selection
+  - cancel
+    -> ChangeReturn
+
+// Dispensing the chosen item
+Dispensing
+  OnEntry
+    / activateDispenser(selectedItem)
+  OnExit
+    / logDispense(selectedItem)
+  - dispense_complete
+    -> ChangeReturn
+
+// Returning any owed change
+ChangeReturn
+  OnEntry
+    / calculateChange(amount, price[selectedItem])
+    / returnChange
+    / resetTransaction
+  - change_returned
+    -> Idle
+  - exact_change_unavailable
+    / displayExactChangeMessage
+    -> Idle
+
+// Selected item out of stock
+OutOfStock
+  OnEntry
+    / displayOutOfStockMessage(selectedItem)
+  - refund
+    / refundAll(amount)
+    -> Idle
+  - cancel
+    -> Idle
+
+// Unrecoverable error or maintenance mode
+Error
+  OnEntry
+    / displayErrorMessage
+    / lockMachine
+  - reset_machine
+    / unlockMachine
+    -> Idle

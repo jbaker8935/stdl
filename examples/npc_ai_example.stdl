@@ -1,0 +1,86 @@
+// NPC Game AI State Machine Example stdl
+
+// Initial idle behavior
+Idle
+  OnEntry
+    / playIdleAnimation
+    / scanForPlayer
+  - see_player [distance < detectionRange && !playerHidden]
+    -> Chase
+  - patrol_timer_elapsed
+    -> Patrol
+
+// Moving between waypoints
+Patrol
+  OnEntry
+    / chooseNextWaypoint
+    / moveToWaypoint
+    / playWalkAnimation
+  OnExit
+    / stopMovement
+  - see_player [distance < detectionRange && !playerHidden]
+    -> Chase
+  - reached_waypoint
+    -> Idle
+  - patrol_complete
+    -> Idle
+
+// Pursuit behavior
+Chase
+  OnEntry
+    / playRunAnimation
+    / increaseDetectionTolerance
+  OnExit
+    / resetDetectionTolerance
+  - player_in_attack_range [distance <= attackRange]
+    -> Attack
+  - lost_player [distance > loseSightRange]
+    -> Patrol
+  - health_low [health < fleeThreshold]
+    -> Flee
+
+// Combat behavior
+Attack
+  OnEntry
+    / playAttackAnimation
+    / stopMovement
+  OnExit
+    / resetAttackCooldown
+  - attack_finished [cooldownComplete]
+    -> Chase
+  - player_defeated
+    -> Idle
+  - health_low [health < fleeThreshold]
+    -> Flee
+  - error_detected
+    / logError "Attack animation failed"
+    -> Error
+
+// Retreat when hurt
+Flee
+  OnEntry
+    / playFleeAnimation
+    / increaseSpeed(fleeSpeed)
+  OnExit
+    / resetSpeed
+  - safe_distance_reached [distance > safeDistance]
+    -> Idle
+  - health_zero [health == 0]
+    -> Dead
+  - error_detected
+    -> Error
+
+// Terminal death state
+Dead
+  OnEntry
+    / playDeathAnimation
+    / disableAI
+  // No outgoing transitions
+
+// Error handling
+Error
+  OnEntry
+    / logCriticalError "NPC AI encountered an error"
+    / disableAI
+  - reset_system
+    -> Idle

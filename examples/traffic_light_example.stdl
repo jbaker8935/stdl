@@ -1,0 +1,77 @@
+// Traffic Light State Machine Example stdl
+
+// Powered off (initial)
+Off
+  OnEntry
+    / turnAllLightsOff
+  - power_on
+    -> Red
+
+// Red light phase
+Red
+  OnEntry
+    / turnRedOn
+  OnExit
+    / turnRedOff
+  - timer [elapsed >= redDuration]
+    -> RedYellow
+  - fault_detected
+    -> Fault
+  - power_off
+    / turnAllLightsOff
+    -> Off
+
+// Red+Yellow before green
+RedYellow
+  OnEntry
+    / turnRedOn
+    / turnYellowOn
+  OnExit
+    / turnYellowOff
+  - timer [elapsed >= yellowDuration]
+    -> Green
+  - fault_detected
+    -> Fault
+  - power_off
+    / turnAllLightsOff
+    -> Off
+
+// Green light phase
+Green
+  OnEntry
+    / turnGreenOn
+  OnExit
+    / turnGreenOff
+  - timer [elapsed >= greenDuration]
+    -> Yellow
+  - fault_detected
+    -> Fault
+  - power_off
+    / turnAllLightsOff
+    -> Off
+
+// Yellow before red
+Yellow
+  OnEntry
+    / turnYellowOn
+  OnExit
+    / turnYellowOff
+  - timer [elapsed >= yellowDuration]
+    -> Red
+  - fault_detected
+    -> Fault
+  - power_off
+    / turnAllLightsOff
+    -> Off
+
+// Fault state (e.g., bulb failure)
+Fault
+  OnEntry
+    / turnAllLightsOff
+    / flashYellow // Flashing mode
+    / logError "Traffic light fault"
+  - fault_cleared
+    -> Red
+  - power_off
+    / turnAllLightsOff
+    -> Off

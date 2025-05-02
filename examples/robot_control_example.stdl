@@ -1,0 +1,101 @@
+// Robot Control System State Machine Example stdl
+
+// Waiting for mission start
+Idle
+  OnEntry
+    / displayStatus "Idle"
+    / disableActuators
+  - start_mission [missionAssigned]
+    / planPath(destination)
+    -> Navigate
+  - shutdown
+    -> Shutdown
+
+// Navigating to target
+Navigate
+  OnEntry
+    / enableMotors
+    / followPath
+    / displayStatus "Navigating"
+  OnExit
+    / stopMotors
+  - reached_waypoint [atDestination]
+    -> Pick
+  - obstacle_detected
+    / avoidObstacle
+    -> Navigate
+  - low_battery [battery < chargeThreshold]
+    -> Charge
+  - error_detected
+    -> Error
+
+// Picking up an object
+Pick
+  OnEntry
+    / positionArm
+    / closeGripper
+    / displayStatus "Picking"
+  OnExit
+    / retractArm
+  - pick_complete
+    -> Place
+  - error_detected
+    -> Error
+
+// Placing the object
+Place
+  OnEntry
+    / moveToDropOff
+    / openGripper
+    / displayStatus "Placing"
+  OnExit
+    / retractArm
+  - place_complete
+    -> Idle
+  - low_battery [battery < chargeThreshold]
+    -> Charge
+  - error_detected
+    -> Error
+
+// Recharging the battery
+Charge
+  OnEntry
+    / navigateToCharger
+    / startCharging
+    / displayStatus "Charging"
+  OnExit
+    / stopCharging
+  - charged [battery >= full]
+    -> Idle
+  - error_detected
+    -> Error
+
+// Maintenance mode (manual intervention)
+Maintenance
+  OnEntry
+    / alertTechnician
+    / disableActuators
+    / displayStatus "Maintenance"
+  - maintenance_complete
+    -> Idle
+  - shutdown
+    -> Shutdown
+
+// Error handling
+Error
+  OnEntry
+    / stopAllActuators
+    / logError "Critical fault"
+    / displayStatus "Error"
+  - reset_error
+    -> Maintenance
+  - shutdown
+    -> Shutdown
+
+// Safe shutdown
+Shutdown
+  OnEntry
+    / stopAllActuators
+    / powerDownSystems
+    / displayStatus "Shutdown"
+  // No outgoing transitions

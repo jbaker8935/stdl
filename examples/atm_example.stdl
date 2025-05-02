@@ -1,0 +1,129 @@
+// Powered off (initial)
+Off
+  OnEntry
+    / powerDownSystems
+  - power_on
+    -> Idle
+
+// Waiting for card insertion
+Idle
+  OnEntry
+    / displayWelcome
+    / unlockCardSlot
+  - insert_card
+    / captureCard
+    -> CardInserted
+  - service_mode
+    / lockMachine
+    -> OutOfService
+
+// Card read, prompt PIN
+CardInserted
+  OnEntry
+    / displayInsertPin
+    / enableKeypad
+  - enter_pin
+    / readPin
+    -> PinEntry
+  - cancel
+    / returnCard
+    -> Idle
+
+// Verifying PIN
+PinEntry
+  OnEntry
+    / startPinTimer
+  - pin_valid
+    -> Authenticated
+  - pin_invalid [attempts < maxAttempts]
+    / displayPinError
+    -> CardInserted
+  - pin_invalid [attempts >= maxAttempts]
+    / retainCard
+    / alertSecurity
+    -> Error
+
+// Authenticated, show menu
+Authenticated
+  OnEntry
+    / displayMenu
+  - select_transaction [type=='withdraw' || type=='deposit' || type=='balance']
+    -> TransactionSelection
+  - cancel
+    -> EjectCard
+
+// Handle transaction selection
+TransactionSelection
+  OnEntry
+    / promptAmount(type)
+  - amount_entered [type=='withdraw' && amount<=balance]
+    / debitAccount(amount)
+    -> ProcessingTransaction
+  - amount_entered [type=='withdraw' && amount>balance]
+    / displayInsufficientFunds
+    -> Error
+  - amount_entered [type=='deposit']
+    / acceptDeposit(amount)
+    -> ProcessingTransaction
+  - no_amount [type=='balance']
+    / displayBalance(balance)
+    -> ProcessingTransaction
+  - cancel
+    -> EjectCard
+
+// Process the debit/credit
+ProcessingTransaction
+  OnEntry
+    / processTransaction
+  OnExit
+    / logTransaction
+  - transaction_success
+    -> DispensingCash
+  - transaction_fail
+    -> Error
+
+// Dispense cash if needed
+DispensingCash
+  OnEntry
+    / dispenseCash(amount)
+  - cash_dispensed
+    -> PrintingReceipt
+
+// Print receipt if requested
+PrintingReceipt
+  OnEntry
+    / askReceiptOption
+  - receipt_selected [wantReceipt]
+    / printReceipt
+    -> EjectCard
+  - receipt_selected [!wantReceipt]
+    -> EjectCard
+
+// Return card and reset
+EjectCard
+  OnEntry
+    / ejectCard
+    / displayThankYou
+  - card_removed
+    -> Idle
+
+// Error or fraud lockout
+Error
+  OnEntry
+    / displayError
+    / logError
+    / returnCard
+  - reset
+    -> Idle
+  - service_mode
+    -> OutOfService
+
+// Out of service for maintenance
+OutOfService
+  OnEntry
+    / lockMachine
+    / displayOutOfService
+  - service_complete
+    -> Idle
+  - power_off
+    -> Off
