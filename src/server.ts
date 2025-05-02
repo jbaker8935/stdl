@@ -115,6 +115,7 @@ interface ExecuteActionResult {
     }[];
     error?: string;         // If an error occurred
     warning?: string;       // If a non-critical issue occurred
+    targetStateRange?: Range; // Add range for the target state definition
 }
 
 // --- Tokenizer Implementation ---
@@ -129,7 +130,7 @@ function tokenize(textDocument: TextDocument): Token[] {
     const onExitRegex = /^(\s*)OnExit/;
     const initialRegex = /^(\s*)Initial/;
     const stateRegex = /^(\s*)(\w[\w\s]*)/;
-    const eventRegex = /^(\s*)-\s*(\w[\w\s]*)(?:\s*\[(.*?)\])?/;
+    const eventRegex = /^(\s*)-\s*(\w[\w\s]*)(?:\s*(\[))?/;
     const actionRegex = /^(\s*)\/\s*(.*)/;
     const transitionRegex = /^(\s*)->\s*(\w[\w\s]*)/;
     const commentRegex = /^\s*\/\//;
@@ -184,26 +185,66 @@ function tokenize(textDocument: TextDocument): Token[] {
             tokens.push({ type: TokenType.ON_EXIT, text: 'OnExit', range, indentation: currentIndentation });
         } else if ((match = line.match(initialRegex)) && match[1].length === currentIndentation) {
             tokens.push({ type: TokenType.INITIAL_PSEUDO_STATE, text: 'Initial', range, indentation: currentIndentation });
-        } else if ((match = line.match(stateRegex)) && match[1].length === currentIndentation) {
+        } else if ((match = line.match(stateRegex)) && match[1].length === currentIndentation && !eventRegex.test(line) && !actionRegex.test(line) && !transitionRegex.test(line) && !onEntryRegex.test(line) && !onExitRegex.test(line) && !initialRegex.test(line)) {
             tokens.push({ type: TokenType.STATE_DECLARATION, text: match[2].trim(), range: Range.create(lineNum, startCol, lineNum, startCol + match[2].trim().length), indentation: currentIndentation });
         } else if ((match = line.match(eventRegex)) && match[1].length === currentIndentation) {
-            tokens.push({ type: TokenType.EVENT, text: match[2].trim(), range: Range.create(lineNum, startCol + 2, lineNum, startCol + 2 + match[2].trim().length), indentation: currentIndentation });
-            if (match[3] !== undefined) {
-                const guardContent = match[3].trim();
-                const guardStartCol = line.indexOf('[');
-                const guardEndCol = line.indexOf(']');
-                tokens.push({ type: TokenType.GUARD_START, text: '[', range: Range.create(lineNum, guardStartCol, lineNum, guardStartCol + 1), indentation: currentIndentation });
-                tokens.push({ type: TokenType.GUARD_CONTENT, text: guardContent, range: Range.create(lineNum, guardStartCol + 1, lineNum, guardEndCol), indentation: currentIndentation });
-                tokens.push({ type: TokenType.GUARD_END, text: ']', range: Range.create(lineNum, guardEndCol, lineNum, guardEndCol + 1), indentation: currentIndentation });
+            const eventText = match[2].trim();
+            const eventEndCol = line.indexOf(eventText, startCol) + eventText.length;
+            tokens.push({ type: TokenType.EVENT, text: eventText, range: Range.create(lineNum, line.indexOf(eventText, startCol), lineNum, eventEndCol), indentation: currentIndentation });
+
+            if (match[3]) {
+                const guardStartCol = line.indexOf('[', eventEndCol);
+                if (guardStartCol !== -1) {
+                    tokens.push({ type: TokenType.GUARD_START, text: '[', range: Range.create(lineNum, guardStartCol, lineNum, guardStartCol + 1), indentation: currentIndentation });
+
+                    let bracketLevel = 1;
+                    let guardEndCol = -1;
+                    let currentPos = guardStartCol + 1;
+
+                    while (currentPos < line.length) {
+                        if (line[currentPos] === '[') {
+                            bracketLevel++;
+                        } else if (line[currentPos] === ']') {
+                            bracketLevel--;
+                            if (bracketLevel === 0) {
+                                guardEndCol = currentPos;
+                                break;
+                            }
+                        }
+                        currentPos++;
+                    }
+
+                    if (guardEndCol !== -1) {
+                        const guardContent = line.substring(guardStartCol + 1, guardEndCol).trim();
+                        const actualContentStart = line.indexOf(guardContent, guardStartCol + 1);
+                        const actualContentEnd = actualContentStart + guardContent.length;
+                        tokens.push({ type: TokenType.GUARD_CONTENT, text: guardContent, range: Range.create(lineNum, actualContentStart, lineNum, actualContentEnd), indentation: currentIndentation });
+                        tokens.push({ type: TokenType.GUARD_END, text: ']', range: Range.create(lineNum, guardEndCol, lineNum, guardEndCol + 1), indentation: currentIndentation });
+                    } else {
+                        const remainingText = line.substring(guardStartCol + 1).trim();
+                        if (remainingText) {
+                            tokens.push({ type: TokenType.UNKNOWN, text: remainingText, range: Range.create(lineNum, guardStartCol + 1, lineNum, line.length), indentation: currentIndentation });
+                        }
+                    }
+                } else {
+                    const remainingText = line.substring(eventEndCol).trim();
+                    if (remainingText) {
+                        tokens.push({ type: TokenType.UNKNOWN, text: remainingText, range: Range.create(lineNum, eventEndCol, lineNum, line.length), indentation: currentIndentation });
+                    }
+                }
             }
         } else if ((match = line.match(actionRegex)) && match[1].length === currentIndentation) {
-            tokens.push({ type: TokenType.ACTION, text: match[2].trim(), range: Range.create(lineNum, startCol + 2, lineNum, startCol + 2 + match[2].trim().length), indentation: currentIndentation });
+            tokens.push({ type: TokenType.ACTION, text: match[2].trim(), range: Range.create(lineNum, startCol + line.substring(startCol).indexOf('/') + 1, lineNum, endCol), indentation: currentIndentation });
         } else if ((match = line.match(transitionRegex)) && match[1].length === currentIndentation) {
-            tokens.push({ type: TokenType.TRANSITION, text: match[2].trim(), range: Range.create(lineNum, startCol + 3, lineNum, startCol + 3 + match[2].trim().length), indentation: currentIndentation });
+            tokens.push({ type: TokenType.TRANSITION, text: match[2].trim(), range: Range.create(lineNum, startCol + line.substring(startCol).indexOf('>') + 1, lineNum, endCol), indentation: currentIndentation });
         } else {
-            tokens.push({ type: TokenType.UNKNOWN, text: trimmedLine, range, indentation: currentIndentation });
+            if (trimmedLine.length > 0) {
+                tokens.push({ type: TokenType.UNKNOWN, text: trimmedLine, range, indentation: currentIndentation });
+            }
         }
-        tokens.push({ type: TokenType.NEWLINE, text: '\n', range: Range.create(lineNum, line.length, lineNum, line.length), indentation: currentIndentation });
+        if (!commentRegex.test(line) && !emptyLineRegex.test(line) && (tokens.length === 0 || tokens[tokens.length - 1].type !== TokenType.NEWLINE)) {
+            tokens.push({ type: TokenType.NEWLINE, text: '\n', range: Range.create(lineNum, line.length, lineNum, line.length), indentation: currentIndentation });
+        }
     }
 
     while (currentIndentation > 0) {
@@ -213,7 +254,7 @@ function tokenize(textDocument: TextDocument): Token[] {
         currentIndentation = previousIndentation;
     }
 
-    tokens.push({ type: TokenType.EOF, text: '', range: Range.create(lines.length, 0, lines.length, 0), indentation: 0 });
+    tokens.push({ type: TokenType.EOF, text: '', range: Range.create(lines.length > 0 ? lines.length : 0, 0, lines.length > 0 ? lines.length : 0, 0), indentation: 0 });
     return tokens;
 }
 
@@ -280,19 +321,26 @@ class Parser {
         const eventToken = this.previous();
         let guardContent: string | undefined = undefined;
         let guardRange: Range | undefined = undefined;
+        let guardContentRange: Range | undefined = undefined;
 
         if (this.match(TokenType.GUARD_START)) {
-            guardRange = this.previous().range;
+            const guardStartToken = this.previous();
+            guardRange = guardStartToken.range;
             if (this.match(TokenType.GUARD_CONTENT)) {
-                guardContent = this.previous().text;
-                guardRange = Range.create(guardRange.start, this.previous().range.end);
+                const guardContentToken = this.previous();
+                guardContent = guardContentToken.text;
+                guardContentRange = guardContentToken.range;
+                guardRange = Range.create(guardRange.start, guardContentToken.range.end);
             } else {
-                this.addDiagnostic('Expected guard condition text inside [...].', this.peek().range);
+                guardContent = "";
+                guardContentRange = Range.create(guardStartToken.range.end, guardStartToken.range.end);
+                guardRange = Range.create(guardRange.start, guardStartToken.range.end);
             }
             if (this.match(TokenType.GUARD_END)) {
                 guardRange = Range.create(guardRange.start, this.previous().range.end);
             } else {
                 this.addDiagnostic('Expected closing "]" for guard condition.', this.peek().range);
+                guardRange = guardContentRange ? Range.create(guardStartToken.range.start, guardContentRange.end) : guardStartToken.range;
             }
         }
 
@@ -607,12 +655,25 @@ connection.onInitialized(() => {
         const tokens = tokenize(document);
         const parser = new Parser(tokens, document);
         const { model: parsedModel } = parser.parse();
-        const stateMachine = transformModelForDebugger(parsedModel);
+        const stateMachine = transformModelForDebugger(parsedModel); // This populates localDefinedStatesDebug internally
 
         if (!stateMachine || !stateMachine.states) {
             console.error(`[Server] Failed to parse or transform state machine for URI: ${uri}`);
             return { error: 'Failed to parse or transform state machine' };
         }
+
+        // Need access to the node map created during transformation
+        const localDefinedStatesDebug = new Map<string, { node: StateNode }>();
+        function collectAllStatesForAction(nodes: StateNode[], prefix: string = ''): void {
+            for (const node of nodes) {
+                const qualifiedName = prefix ? `${prefix}.${node.name}` : node.name;
+                localDefinedStatesDebug.set(qualifiedName, { node });
+                if (node.subStates.length > 0) {
+                    collectAllStatesForAction(node.subStates, qualifiedName);
+                }
+            }
+        }
+        collectAllStatesForAction(parsedModel); // Populate the map for this request
 
         const stateData = stateMachine.states[currentState];
         if (!stateData) {
@@ -644,7 +705,13 @@ connection.onInitialized(() => {
         if (matchingTransitions.length === 1) {
             const targetState = matchingTransitions[0].target;
             console.log(`[Server] Unique transition found: '${currentState}' --(${action}${guard ? ` [${guard}]` : ''})--> '${targetState}'`);
-            return { newState: targetState };
+            // Find the range of the target state definition
+            const targetStateInfo = localDefinedStatesDebug.get(targetState);
+            const targetRange = targetStateInfo?.node.range;
+            if (!targetRange) {
+                 console.warn(`[Server] Could not find range for target state: ${targetState}`);
+            }
+            return { newState: targetState, targetStateRange: targetRange }; // Include the range
         } else if (matchingTransitions.length > 1) {
             console.warn(`[Server] Multiple transitions match action '${action}' and guard '${guard || 'none'}' in state '${currentState}'. Returning choices.`);
             // Revert to previous behavior of returning choices if multiple match (though ideally guards are unique)
@@ -992,7 +1059,7 @@ function transformModelForDebugger(model: StateNode[]): StateMachine | null {
     };
 
     // Create and populate a local map for this transformation
-    const localDefinedStatesDebug = new Map<string, { node: StateNode }>();
+    const localDefinedStatesDebug = new Map<string, { node: StateNode }>(); // Keep this map local to the function call
     function collectAllStates(nodes: StateNode[], prefix: string = ''): void {
         for (const node of nodes) {
             const qualifiedName = prefix ? `${prefix}.${node.name}` : node.name;
@@ -1002,7 +1069,7 @@ function transformModelForDebugger(model: StateNode[]): StateMachine | null {
             }
         }
     }
-    collectAllStates(model);
+    collectAllStates(model); // Populate the map when transforming
 
     function processStateNode(node: StateNode, prefix: string = ''): void {
         const qualifiedName = prefix ? `${prefix}.${node.name}` : node.name;
@@ -1344,7 +1411,7 @@ function performSemanticValidation(model: StateMachineModel, textDocument: TextD
 
         if (!isComposite && !hasOutgoingTransitions) {
             diagnostics.push({
-                severity: DiagnosticSeverity.Information,
+                severity: DiagnosticSeverity.Hint,
                 range: stateInfo.node.range,
                 message: `State "${qualifiedName}" is terminal (no outgoing transitions).`,
                 source: 'stdl-semantic'
@@ -1370,3 +1437,4 @@ connection.onDidChangeWatchedFiles(_change => {
 // --- Start Listening (Single Instance) ---
 documents.listen(connection);
 connection.listen();
+

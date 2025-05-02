@@ -2,6 +2,10 @@
     "name": "stdl",
     "displayName": "STDL",
     "description": "State Transition Description Language",
+    "icon": "images/icon.png",
+    "publisher": "jbaker8935",
+    "license": "MIT",
+    "licenseFile": "LICENSE.md",
     "version": "0.1.0",
     "engines": {
         "vscode": "^1.59.0"

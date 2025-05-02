@@ -39,12 +39,14 @@ interface ExecuteActionResult {
     }[];
     error?: string;
     warning?: string;
+    targetStateRange?: LspRange; // Ensure this matches the server's definition
 }
 
 interface SessionLogEntry {
     timestamp: string;
     type: 'state' | 'event' | 'action' | 'entry' | 'exit' | 'info' | 'error';
     message: string;
+    sequence: number; // Add sequence number
 }
 
 let currentPanel: vscode.WebviewPanel | undefined = undefined;
@@ -57,12 +59,14 @@ let sessionLog: SessionLogEntry[] = []; // Array to store all session log entrie
 function addLogEntry(type: 'state' | 'event' | 'action' | 'entry' | 'exit' | 'info' | 'error', message: string) {
     const now = new Date();
     const timestamp = now.toISOString().replace('T', ' ').substring(0, 19);
-    sessionLog.push({ timestamp, type, message });
-    
+    const sequence = sessionLog.length; // Get sequence number before adding
+    const newEntry: SessionLogEntry = { timestamp, type, message, sequence };
+    sessionLog.push(newEntry);
+
     if (currentPanel) {
         currentPanel.webview.postMessage({
             command: 'addLogEntry',
-            entry: { timestamp, type, message }
+            entry: newEntry // Send the full entry object including sequence
         });
     }
 }
@@ -237,20 +241,20 @@ function createOrShowWebview(extensionUri: vscode.Uri, documentUri: string) {
                                             }
                                             
                                             // After actions are logged, handle the OnExit and state transition
-                                            continueStateTransition();
+                                            continueStateTransition(response.targetStateRange); // Pass range here
                                         })
                                         .catch(error => {
                                             console.error('[Debugger] Error handling event handlers:', error);
                                             // Even if there's an error, continue the state transition
-                                            continueStateTransition();
+                                            continueStateTransition(response.targetStateRange); // Pass range here
                                         });
                                 } else {
                                     // If actions were logged, continue with the state transition immediately
-                                    continueStateTransition();
+                                    continueStateTransition(response.targetStateRange); // Pass range here
                                 }
                                 
                                 // This function continues the state transition after actions have been processed
-                                function continueStateTransition() {
+                                function continueStateTransition(targetRange?: LspRange) { // Accept range
                                     // THEN log OnExit actions from the current state
                                     if (oldStateData && oldStateData.onExit && oldStateData.onExit.length > 0) {
                                         oldStateData.onExit.forEach((exitAction: string) => {
@@ -263,6 +267,11 @@ function createOrShowWebview(extensionUri: vscode.Uri, documentUri: string) {
                                     const newState = response.newState as string;
                                     currentState = newState;
                                     addLogEntry('state', `Transitioned to state: ${newState}`);
+
+                                    // Reveal and highlight the new state in the editor
+                                    if (targetRange) { // Check if the range was provided
+                                        revealStateInEditor(documentUri, targetRange); // Call reveal here
+                                    }
                                     
                                     // Log OnEntry actions for the new state
                                     const newStateData = currentStateMachine?.states[newState];
@@ -297,13 +306,13 @@ function createOrShowWebview(extensionUri: vscode.Uri, documentUri: string) {
                                                     vscode.debug.activeDebugConsole.appendLine(`[stdl Debugger] Executing OnEntry action in initial state: ${action}`);
                                                 });
                                             }
+                                            // TODO: Optionally reveal the initial state as well? Needs its range.
                                         }
                                     }
                                     
                                     updateWebviewContent();
                                 }
                             } else if (response && response.choices && response.choices.length > 0) {
-                                // This block should ideally not be hit if guard is provided and unique
                                 vscode.debug.activeDebugConsole.appendLine(`[stdl Debugger] Action '${actionName}' in state '${currentActionState}' resulted in choices (unexpected with guard).`);
                                 console.warn('[Debugger] Server returned choices even with guard:', response.choices);
                                 vscode.window.showWarningMessage('Action resulted in multiple choices unexpectedly.');
@@ -385,6 +394,44 @@ function createOrShowWebview(extensionUri: vscode.Uri, documentUri: string) {
         },
         null
     );
+}
+
+// Function to reveal and highlight a state in the editor
+function revealStateInEditor(documentUri: string, range: LspRange) {
+    const targetUri = vscode.Uri.parse(documentUri);
+    const editor = vscode.window.visibleTextEditors.find(
+        (e) => e.document.uri.toString() === targetUri.toString()
+    );
+
+    if (editor) {
+        const startPos = new vscode.Position(range.start.line, range.start.character);
+        const endPos = new vscode.Position(range.end.line, range.end.character);
+        const vscodeRange = new vscode.Range(startPos, endPos);
+
+        // Reveal the range in the center of the viewport
+        editor.revealRange(vscodeRange, vscode.TextEditorRevealType.InCenterIfOutsideViewport);
+        // Select the range (highlights it) - Select the whole line for better visibility
+        const lineStart = new vscode.Position(range.start.line, 0);
+        const lineEnd = editor.document.lineAt(range.start.line).range.end; // Select the entire line where the state starts
+        editor.selection = new vscode.Selection(lineStart, lineEnd);
+        console.log(`[Debugger] Revealed and selected state at range: ${JSON.stringify(range)}`);
+    } else {
+        console.warn(`[Debugger] Could not find visible editor for URI: ${documentUri}`);
+        // Optionally, try opening the document if not visible
+        vscode.workspace.openTextDocument(targetUri).then(doc => {
+            vscode.window.showTextDocument(doc, { viewColumn: vscode.ViewColumn.One }).then(newEditor => {
+                 const startPos = new vscode.Position(range.start.line, range.start.character);
+                 const endPos = new vscode.Position(range.end.line, range.end.character);
+                 const vscodeRange = new vscode.Range(startPos, endPos);
+                 newEditor.revealRange(vscodeRange, vscode.TextEditorRevealType.InCenterIfOutsideViewport);
+                 // Select the whole line here too
+                 const lineStart = new vscode.Position(range.start.line, 0);
+                 const lineEnd = newEditor.document.lineAt(range.start.line).range.end;
+                 newEditor.selection = new vscode.Selection(lineStart, lineEnd);
+                 console.log(`[Debugger] Opened, revealed and selected state at range: ${JSON.stringify(range)}`);
+            });
+        });
+    }
 }
 
 function updateWebviewContent() {
@@ -536,25 +583,20 @@ function getWebviewContent(webview: vscode.Webview, stateData: StateData, curren
     }
     actionsHtml += '</ul>';
 
-    // Initialize log HTML with existing log entries
-    let logEntriesHtml = '';
-    sessionLog.forEach(entry => {
-        const typeClass = `log-${entry.type}`;
-        logEntriesHtml += `<div class="log-entry ${typeClass}">
-            <span class="log-timestamp">${entry.timestamp}</span>
-            <span class="log-message">${entry.message}</span>
-        </div>`;
-    });
+    // Prepare initial log data for injection (now includes sequence)
+    const initialLogDataJson = JSON.stringify(sessionLog);
 
+    // Log area HTML - Add Sort Toggle Button
     const logAreaHtml = `
         <div class="log-section">
             <h3>Debug Session Log:</h3>
             <div class="log-controls">
+                <button id="sort-toggle" onclick="toggleSortOrder()">Sort: Newest First</button>
                 <button onclick="clearLog()">Clear Log</button>
                 <button onclick="copyLogToClipboard()">Copy to Clipboard</button>
             </div>
             <div id="log-container">
-                ${logEntriesHtml}
+                <!-- Log entries will be rendered here by JavaScript -->
             </div>
         </div>
     `;
@@ -630,6 +672,7 @@ function getWebviewContent(webview: vscode.Webview, stateData: StateData, curren
             .log-controls {
                 display: flex;
                 justify-content: flex-end;
+                gap: 0.5em; /* Add some space between buttons */
                 margin-bottom: 0.5em;
             }
             #log-container {
@@ -695,6 +738,9 @@ function getWebviewContent(webview: vscode.Webview, stateData: StateData, curren
     </head>
     <body>
         <h1>stdl State Machine Debugger</h1>
+        <div class="controls-section">
+            ${stopButtonHtml}
+        </div>
         <div class="current-state">Current State: ${currentStateName}</div>
         <div class="state-details">
             ${entryExitHtml || '<p><i>No entry/exit actions defined.</i></p>'}
@@ -702,19 +748,143 @@ function getWebviewContent(webview: vscode.Webview, stateData: StateData, curren
         ${actionsHtml}
         ${logAreaHtml}
         <hr>
-        <div class="controls-section">
-            ${stopButtonHtml}
-        </div>
 
         <script>
             const vscode = acquireVsCodeApi();
 
-            // Store a reference to the log container
+            // Store log entries (including sequence) and sort order locally in the webview
+            let webviewLogEntries = []; // Will store { timestamp, type, message, sequence }
+            let sortOrder = 'newest'; // 'newest' or 'oldest'
+
+            // Get references to DOM elements
             const logContainer = document.getElementById('log-container');
-            
-            // Scroll to the bottom of the log initially
-            if (logContainer) {
-                logContainer.scrollTop = logContainer.scrollHeight;
+            const sortToggleButton = document.getElementById('sort-toggle');
+
+            // Function to create a single log entry element
+            function createLogElement(entry) {
+                const entryElement = document.createElement('div');
+                entryElement.className = \`log-entry log-\${entry.type}\`;
+
+                const timestampSpan = document.createElement('span');
+                timestampSpan.className = 'log-timestamp';
+                timestampSpan.textContent = entry.timestamp;
+
+                const messageSpan = document.createElement('span');
+                messageSpan.className = 'log-message';
+                messageSpan.textContent = entry.message;
+
+                entryElement.appendChild(timestampSpan);
+                entryElement.appendChild(messageSpan);
+                return entryElement;
+            }
+
+            // Function to render all log entries based on current sort order
+            function renderLogEntries() {
+                if (!logContainer) return;
+                logContainer.innerHTML = ''; // Clear existing entries
+
+                // Sort a copy: Primary key timestamp, Secondary key sequence
+                const sortedEntries = [...webviewLogEntries].sort((a, b) => {
+                    const dateA = new Date(a.timestamp.replace(' ', 'T') + 'Z');
+                    const dateB = new Date(b.timestamp.replace(' ', 'T') + 'Z');
+                    const timestampDiff = sortOrder === 'newest' ? dateB - dateA : dateA - dateB;
+
+                    if (timestampDiff !== 0) {
+                        return timestampDiff;
+                    }
+                    // If timestamps are equal, sort by original sequence number (always ascending)
+                    return a.sequence - b.sequence;
+                });
+
+                sortedEntries.forEach(entry => {
+                    logContainer.appendChild(createLogElement(entry));
+                });
+
+                // Update button text
+                sortToggleButton.textContent = sortOrder === 'newest' ? 'Sort: Newest First' : 'Sort: Oldest First';
+
+                // Scroll to appropriate position
+                if (sortOrder === 'newest') {
+                    logContainer.scrollTop = 0; // Scroll to top
+                } else {
+                    logContainer.scrollTop = logContainer.scrollHeight; // Scroll to bottom
+                }
+            }
+
+            // Function to add a single new log entry to the view
+            function addLogEntryToView(entry) { // entry now includes sequence
+                if (!logContainer) return;
+
+                // Add to our local store (including sequence)
+                webviewLogEntries.push(entry);
+
+                // Create the element
+                const entryElement = createLogElement(entry);
+
+                // Add to the DOM based on sort order
+                // Note: We don't re-sort the whole list here for performance.
+                // We just append/prepend based on the current view order.
+                // The full sort happens on initial load and when toggling sort.
+                if (sortOrder === 'newest') {
+                    logContainer.insertBefore(entryElement, logContainer.firstChild);
+                    logContainer.scrollTop = 0; // Scroll to top to see the new entry
+                } else {
+                    logContainer.appendChild(entryElement);
+                    logContainer.scrollTop = logContainer.scrollHeight; // Scroll to bottom
+                }
+            }
+
+            // Function to clear the log view and local store
+            function clearLogView() {
+                webviewLogEntries = [];
+                if (logContainer) {
+                    logContainer.innerHTML = '';
+                }
+            }
+
+            // Function to toggle sort order and re-render
+            function toggleSortOrder() {
+                sortOrder = (sortOrder === 'newest' ? 'oldest' : 'newest');
+                renderLogEntries(); // Re-render applies the new sort order
+            }
+
+            // Function to copy log to clipboard, respecting sort order
+            function copyLogToClipboard() {
+                if (!logContainer) return;
+
+                // Sort a copy based on the current view order (timestamp primary, sequence secondary)
+                 const sortedEntries = [...webviewLogEntries].sort((a, b) => {
+                    const dateA = new Date(a.timestamp.replace(' ', 'T') + 'Z');
+                    const dateB = new Date(b.timestamp.replace(' ', 'T') + 'Z');
+                    const timestampDiff = sortOrder === 'newest' ? dateB - dateA : dateA - dateB;
+
+                    if (timestampDiff !== 0) {
+                        return timestampDiff;
+                    }
+                    return a.sequence - b.sequence; // Secondary sort by sequence
+                });
+
+                let logText = '';
+                sortedEntries.forEach(entry => {
+                    logText += \`\${entry.timestamp} \${entry.message}\\n\`;
+                });
+
+                navigator.clipboard.writeText(logText).then(
+                    () => console.log('Log copied to clipboard'),
+                    err => console.error('Failed to copy log: ', err)
+                );
+
+                // Send a message to show the success notification in VS Code
+                vscode.postMessage({
+                    command: 'logCopied'
+                });
+            }
+
+            // Function to send clear log command to extension
+            function clearLog() {
+                vscode.postMessage({
+                    command: 'clearLog'
+                });
             }
 
             // Handle messages from the extension
@@ -722,89 +892,48 @@ function getWebviewContent(webview: vscode.Webview, stateData: StateData, curren
                 const message = event.data;
                 switch (message.command) {
                     case 'addLogEntry':
-                        addLogEntryToView(message.entry);
+                        addLogEntryToView(message.entry); // entry includes sequence
                         break;
                     case 'clearLog':
                         clearLogView();
                         break;
+                    case 'logCopied':
+                         // Optionally show a VS Code notification
+                         // vscode.postMessage({ command: 'showInfoMessage', text: 'Log copied!' });
+                         break;
                 }
             });
 
-            function addLogEntryToView(entry) {
-                if (!logContainer) return;
-                
-                const entryElement = document.createElement('div');
-                entryElement.className = \`log-entry log-\${entry.type}\`;
-                
-                const timestampSpan = document.createElement('span');
-                timestampSpan.className = 'log-timestamp';
-                timestampSpan.textContent = entry.timestamp;
-                
-                const messageSpan = document.createElement('span');
-                messageSpan.className = 'log-message';
-                messageSpan.textContent = entry.message;
-                
-                entryElement.appendChild(timestampSpan);
-                entryElement.appendChild(messageSpan);
-                
-                logContainer.appendChild(entryElement);
-                logContainer.scrollTop = logContainer.scrollHeight;
-            }
-            
-            function clearLogView() {
-                if (logContainer) {
-                    logContainer.innerHTML = '';
+            // Initial setup
+            try {
+                // Load initial log data passed from the extension
+                const initialData = ${initialLogDataJson};
+                if (Array.isArray(initialData)) {
+                    // Ensure sequence numbers are present if loading older data structure (optional robustness)
+                    webviewLogEntries = initialData.map((entry, index) => ({
+                        ...entry,
+                        sequence: entry.sequence !== undefined ? entry.sequence : index
+                    }));
+                } else {
+                     console.error("Failed to parse initial log data:", initialData);
+                     webviewLogEntries = [];
                 }
+            } catch (e) {
+                console.error("Error parsing initial log data:", e);
+                webviewLogEntries = []; // Fallback to empty log
             }
-            
-            function copyLogToClipboard() {
-                if (!logContainer) return;
-                
-                let logText = '';
-                const entries = logContainer.querySelectorAll('.log-entry');
-                entries.forEach(entry => {
-                    const timestamp = entry.querySelector('.log-timestamp').textContent;
-                    const message = entry.querySelector('.log-message').textContent;
-                    logText += \`\${timestamp} \${message}\\n\`;
-                });
-                
-                navigator.clipboard.writeText(logText).then(
-                    () => console.log('Log copied to clipboard'),
-                    err => console.error('Failed to copy log: ', err)
-                );
-                
-                // Send a message to show the success notification in VS Code
-                vscode.postMessage({
-                    command: 'logCopied'
-                });
-            }
-            
-            function clearLog() {
-                vscode.postMessage({
-                    command: 'clearLog'
-                });
-            }
+
+            // Initial render of the log
+            renderLogEntries();
+
 
             // Modified selectAction to send both action and guard
             function selectAction(actionName, guardText) {
-                console.log('[Webview] selectAction called. Action:', actionName, 'Guard:', guardText);
-                try {
-                    vscode.postMessage({
-                        command: 'actionSelected',
-                        action: actionName,
-                        guard: guardText // Send the guard text
-                    });
-                    console.log('[Webview] postMessage sent successfully.');
-                } catch (e) {
-                    console.error('[Webview] Error sending postMessage:', e);
-                }
+                // ... existing selectAction code ...
             }
 
             function stopDebugging() {
-                console.log('Sending stopDebugging command');
-                vscode.postMessage({
-                    command: 'stopDebugging'
-                });
+                // ... existing stopDebugging code ...
             }
         </script>
     </body>
