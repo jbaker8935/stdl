@@ -1,0 +1,55 @@
+// Tower of Hanoi Solver (5 Disks) - Controller State Machine
+// This state machine drives the recursive Tower of Hanoi algorithm.
+// It assumes external logic manages a stack of tasks and performs moves.
+// Tasks can be: solve(n, source, destination, auxiliary) or move(disk, source, destination)
+
+// Initial state: Waiting for the start signal
+Idle
+  - start
+    / pushTask(5, A, C, B) // Push the main goal: Move 5 disks from A to C using B
+    -> ProcessingTask
+
+// Main state: Processing the task at the top of the stack
+ProcessingTask
+  OnEntry
+    / peekTask // Ask external logic to check the current top task (returns type and n if applicable)
+  - task_is_solve [n > 0] // Feedback from peekTask: It's a solve task for n > 0 disks
+    / popTask // Remove the solve(n, src, dst, aux) task we just peeked
+    // Decompose the problem and push sub-tasks onto the stack (in reverse order of execution):
+    / pushTask(n-1, aux, dst, src) // 3. Task: Solve for n-1 disks from auxiliary to destination
+    / pushMoveTask(n, src, dst)    // 2. Task: Move the largest disk (n) from source to destination
+    / pushTask(n-1, src, aux, dst) // 1. Task: Solve for n-1 disks from source to auxiliary
+    -> ProcessingTask // Loop back immediately to process the new top task (which is step 1)
+  - task_is_solve [n == 0] // Feedback from peekTask: It's a solve task for n = 0 disks (base case)
+    / popTask // This task is trivial (move 0 disks), just remove it
+    -> ProcessingTask // Loop back to process the next task on the stack (or check if empty)
+  - task_is_move // Feedback from peekTask: It's a command to move a specific disk
+    -> MovingDisk // Transition to the state that executes the physical move
+  - stack_empty // Feedback from peekTask: No more tasks left on the stack
+    -> Completed // The entire puzzle is solved
+
+// State for executing a single disk move
+MovingDisk
+  OnEntry
+    // Assumes the move task details (disk, from, to) were retrieved when peeked/popped
+    / executeMove // Tell external logic to perform the physical disk move
+  - move_complete // Signal from external logic that the move finished successfully
+    / popTask // Remove the completed move task from the stack
+    -> ProcessingTask // Go back to process the next task
+  - move_error // Signal from external logic if the move failed (e.g., invalid move)
+    / logError "Invalid move attempted by algorithm"
+    -> ErrorState // Transition to an error state
+
+// Final state: The puzzle has been successfully solved
+Completed
+  OnEntry
+    / displaySuccess "Tower of Hanoi (5 disks) solved!"
+  // Could stay here or transition back to Idle on a 'reset' event
+
+// Error state: Something went wrong
+ErrorState
+  OnEntry
+    / displayErrorUI "Algorithm encountered an error"
+  - reset
+    / clearStack // Tell external logic to clear the task stack
+    -> Idle // Go back to the initial state
