@@ -160,7 +160,7 @@ function createOrShowWebview(extensionUri: vscode.Uri, documentUri: string) {
 
     currentPanel = vscode.window.createWebviewPanel(
         'stdlDebugger',
-        'stdl State Machine Debugger',
+        'STDL State Machine Debugger',
         vscode.ViewColumn.Beside,
         {
             enableScripts: true,
@@ -737,7 +737,7 @@ function getWebviewContent(webview: vscode.Webview, stateData: StateData, curren
         </style>
     </head>
     <body>
-        <h1>stdl State Machine Debugger</h1>
+        <h1>STDL State Machine Debugger</h1>
         <div class="controls-section">
             ${stopButtonHtml}
         </div>
