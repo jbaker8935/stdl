@@ -1,0 +1,111 @@
+// Example Lunar Lander State Machine in STDL
+
+// Initial state: Approaching the Moon
+ApproachingMoon
+  OnEntry
+    / enableNavigationSensors
+    / calculateTrajectory
+  - initiate_orbital_insertion
+    / startMainEngineBurn // Action to start the burn
+    -> OrbitalInsertionBurn
+
+// State for the engine burn to enter lunar orbit
+OrbitalInsertionBurn
+  OnEntry
+    / monitorBurnParameters
+    / displayBurnProgress
+  OnExit
+    / stopMainEngineBurn // Action to stop the burn
+  - orbit_parameters_met
+    -> InOrbit
+  - burn_anomaly [critical]
+    / executeAbortSequence
+    -> MissionAbort // Transition to an abort state
+  - burn_anomaly [!critical]
+    / logWarning "Minor burn deviation"
+    // Stay in OrbitalInsertionBurn, attempt correction
+
+// State representing stable lunar orbit
+InOrbit
+  OnEntry
+    / performSystemChecks
+    / openCommLinkToEarth
+    / displayOrbitalData
+  - initiate_descent_sequence
+    / startRetroBurn // Action for deorbit burn
+    -> DeorbitBurn
+  - hold_position // Command to wait
+    // Stay in InOrbit
+  - system_failure [critical]
+    / logCriticalFailure "Orbit system failure"
+    -> MissionAbort
+
+// State for the deorbit burn to begin descent
+DeorbitBurn
+  OnEntry
+    / monitorDescentBurn
+  OnExit
+    / stopRetroBurn
+  - descent_trajectory_achieved
+    / deployLandingGear // Action before entering descent
+    -> Descending
+  - burn_error
+    / attemptBurnCorrection
+    // Stay in DeorbitBurn or potentially -> MissionAbort
+
+// Main descent phase towards the lunar surface
+Descending
+  OnEntry
+    / activateLandingRadar
+    / controlDescentRate
+    / displayAltitudeAndVelocity
+  - altitude_threshold_reached [isFinalApproachAltitude]
+    -> FinalApproach
+  - obstacle_detected
+    / executeCollisionAvoidanceManeuver
+    // Stay in Descending (or could have a specific substate)
+  - landing_guidance_failure
+    / switchToBackupGuidance
+    -> Descending // Attempt to continue
+  - critical_fuel_level
+    / logCritical "Fuel level critical during descent"
+    -> MissionAbort // Abort if fuel is too low
+
+// Final moments before touchdown
+FinalApproach
+  OnEntry
+    / fineTuneDescentRate
+    / illuminateLandingSite
+    / finalSystemCheck
+  - touchdown_imminent
+    / prepareForImpact
+    -> Touchdown // Transition just before contact
+
+// Brief state representing the moment of touchdown
+Touchdown
+  OnEntry
+    / detectSurfaceContact
+    / engineShutdownSequence
+  - touchdown_confirmed
+    / secureLander
+    -> Landed
+  - hard_landing_detected
+    / assessDamage
+    -> Landed // Still landed, but may need checks
+
+// Final state: Safely on the lunar surface
+Landed
+  OnEntry
+    / confirmStablePosition
+    / powerDownNonEssentialSystems
+    / transmitLandingSuccess
+  - initiate_surface_operations
+    // Stay in Landed, begin next phase of mission (not detailed here)
+
+// Abort state (can be reached from various points)
+MissionAbort
+  OnEntry
+    / logAbortReason
+    / safeSpacecraftSystems
+    / attemptReturnTrajectory (if applicable)
+  // Terminal state for this example
