@@ -1,0 +1,28 @@
+ModalClosed
+    OnEntry
+        / setModalOpen(false)
+    - OpenModal
+        / setModalOpen(true)
+        -> ModalOpen
+
+ModalOpen
+    OnEntry
+        / setModalOpen(true)
+    OnExit
+        / setModalOpen(false)
+    - Submit
+        / setLoading(true)
+        -> ModalLoading
+    - CloseModal
+        / setModalOpen(false)
+        -> ModalClosed
+
+ModalLoading
+    OnEntry
+        / setLoading(true)
+    - SubmitSuccess
+        / setLoading(false)
+        -> ModalOpen
+    - SubmitFailure
+        / setLoading(false)
+        -> ModalOpen

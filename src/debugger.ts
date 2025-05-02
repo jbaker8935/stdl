@@ -792,8 +792,8 @@ function getWebviewContent(webview: vscode.Webview, stateData: StateData, curren
                     if (timestampDiff !== 0) {
                         return timestampDiff;
                     }
-                    // If timestamps are equal, sort by original sequence number (always ascending)
-                    return a.sequence - b.sequence;
+                    // For 'newest', sort sequence descending; for 'oldest', ascending
+                    return sortOrder === 'newest' ? b.sequence - a.sequence : a.sequence - b.sequence;
                 });
 
                 sortedEntries.forEach(entry => {
@@ -861,7 +861,7 @@ function getWebviewContent(webview: vscode.Webview, stateData: StateData, curren
                     if (timestampDiff !== 0) {
                         return timestampDiff;
                     }
-                    return a.sequence - b.sequence; // Secondary sort by sequence
+                    return sortOrder === 'newest' ? b.sequence - a.sequence : a.sequence - b.sequence; // Secondary sort by sequence
                 });
 
                 let logText = '';
@@ -926,14 +926,20 @@ function getWebviewContent(webview: vscode.Webview, stateData: StateData, curren
             // Initial render of the log
             renderLogEntries();
 
-
-            // Modified selectAction to send both action and guard
+            // Implement selectAction to send both action and guard to extension
             function selectAction(actionName, guardText) {
-                // ... existing selectAction code ...
+                vscode.postMessage({
+                    command: 'actionSelected',
+                    action: actionName,
+                    guard: guardText
+                });
             }
 
+            // Implement stopDebugging to send stop command to extension
             function stopDebugging() {
-                // ... existing stopDebugging code ...
+                vscode.postMessage({
+                    command: 'stopDebugging'
+                });
             }
         </script>
     </body>

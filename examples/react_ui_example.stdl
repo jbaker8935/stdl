@@ -1,0 +1,44 @@
+// State machine for a data fetching React component
+
+Idle
+    OnEntry
+        / clearData
+        / hideLoadingIndicator
+    - CLICK [isDataNotLoaded]
+        / fetchData
+        / displayLoadingIndicator
+        -> Loading
+    - CLICK [!isDataNotLoaded] // Stay Idle if data is already loaded
+        -> Idle
+
+Loading
+    - FETCH_SUCCESS
+        / hideLoadingIndicator
+        / displayData
+        -> Success
+    - FETCH_ERROR
+        / hideLoadingIndicator
+        / displayError
+        -> Error
+
+Success
+    // Display fetched data
+    - RESET
+        -> Idle
+    - CLICK [allowRefetch] // Optional: Allow refetching
+        / fetchData
+        / displayLoadingIndicator
+        -> Loading
+    - CLICK [!allowRefetch] // Stay in Success if refetch is not allowed
+        -> Success
+
+
+Error
+    // Display error message
+    - RESET
+        -> Idle
+    - CLICK // Allow retry on error
+        / fetchData
+        / displayLoadingIndicator
+        -> Loading
+
