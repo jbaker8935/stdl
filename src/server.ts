@@ -87,20 +87,20 @@ export interface StateNode {
 export type StateMachineModel = StateNode[];
 
 // --- Debugger Types (Matching Debugger Expectations) ---
-interface StateTransition {
+export interface StateTransition {
     target: string;
     action?: string;
     guard?: string;
 }
 
-interface StateData {
+export interface StateData {
     name: string;
     onEntry?: string[];
     onExit?: string[];
     transitions: { [event: string]: StateTransition[] };
 }
 
-interface StateMachine {
+export interface StateMachine {
     initialState: string;
     states: { [stateName: string]: StateData };
 }

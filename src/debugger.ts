@@ -125,7 +125,7 @@ export function activateDebugger(context: vscode.ExtensionContext, languageClien
                         });
                     }
 
-                    createOrShowWebview(context.extensionUri, documentUri);
+                    createOrShowWebview(context.extensionUri, documentUri, context.subscriptions); // Pass subscriptions here
                     updateWebviewContent();
                 })
                 .catch(error => {
@@ -135,6 +135,206 @@ export function activateDebugger(context: vscode.ExtensionContext, languageClien
                     currentState = null;
                     addLogEntry('error', `Error loading state machine: ${error.message}`);
                 });
+        }),
+        vscode.commands.registerCommand('stdl.showSequenceDiagram', async () => {
+            if (sessionLog.length === 0) {
+                vscode.window.showInformationMessage('No debug session log available to display sequence diagram.');
+                return;
+            }
+
+            // Generate Mermaid code for sequence diagram from session log
+            let mermaidCode = 'sequenceDiagram\n';
+            const participants = new Set<string>();
+            // Intermediate structure to hold parsed diagram elements in order
+            const elements: {
+                index: number;
+                type: 'initial' | 'transition' | 'entryNote' | 'exitNote' | 'actionNote';
+                state?: string;
+                from?: string;
+                to?: string;
+                event?: string;
+                actions?: string[];
+                noteText?: string;
+            }[] = [];
+
+            let lastStateName: string | null = null;
+            let pendingEvent: { name: string; index: number; actions: string[]; onExits: string[] } | null = null;
+
+            // --- First Pass: Parse log into structured elements ---
+            for (let i = 0; i < sessionLog.length; i++) {
+                const entry = sessionLog[i];
+                const messageParts = entry.message.split(': ');
+                const messageType = messageParts[0];
+                const messageContent = entry.message.substring(messageType.length + 1).trim();
+
+                switch (entry.type) {
+                    case 'info':
+                        if (messageType === 'Debugger started with initial state') {
+                            const initialState = messageContent;
+                            participants.add(initialState);
+                            elements.push({ index: i, type: 'initial', state: initialState });
+                            lastStateName = initialState;
+                        }
+                        break;
+                    case 'state':
+                        if (messageType === 'Entered state' && !lastStateName) {
+                            const initialState = messageContent;
+                            participants.add(initialState);
+                            if (!elements.some(el => el.index === i || (el.type === 'initial' && el.state === initialState))) {
+                                elements.push({ index: i, type: 'initial', state: initialState });
+                            }
+                            lastStateName = initialState;
+                        } else if (messageType === 'Transitioned to state') {
+                            const newState = messageContent;
+                            participants.add(newState);
+                            if (lastStateName && pendingEvent) {
+                                // Attach all collected actions and onExit actions to this transition
+                                const allActions = [...pendingEvent.actions, ...pendingEvent.onExits];
+                                elements.push({
+                                    index: i,
+                                    type: 'transition',
+                                    from: lastStateName,
+                                    to: newState,
+                                    event: pendingEvent.name,
+                                    actions: allActions
+                                });
+                                pendingEvent = null;
+                            } else if (lastStateName && !pendingEvent) {
+                                elements.push({
+                                    index: i,
+                                    type: 'transition',
+                                    from: lastStateName,
+                                    to: newState,
+                                    event: '[Implicit]',
+                                    actions: []
+                                });
+                                console.warn(`[SequenceDiagram] Transition to ${newState} found without preceding event log. Marked as [Implicit].`);
+                            }
+                            lastStateName = newState;
+                        }
+                        break;
+                    case 'event':
+                        if (messageType === 'Event triggered') {
+                            // Use the full event text (including guard) for the transition label
+                            const eventText = messageContent; // Do not strip guard
+                            pendingEvent = { name: eventText, index: i, actions: [], onExits: [] };
+                        }
+                        break;
+                    case 'action':
+                        if (pendingEvent && messageType === 'Action') {
+                            pendingEvent.actions.push(entry.message);
+                        } else if (!pendingEvent && lastStateName && messageType === 'Action') {
+                            elements.push({ index: i, type: 'actionNote', state: lastStateName, noteText: entry.message });
+                        }
+                        break;
+                    case 'exit':
+                        if (pendingEvent && messageType === 'OnExit action') {
+                            pendingEvent.onExits.push(entry.message);
+                        }
+                        break;
+                    case 'entry':
+                        if (lastStateName && messageType === 'OnEntry action') {
+                            elements.push({ index: i, type: 'entryNote', state: lastStateName, noteText: entry.message });
+                        }
+                        break;
+                }
+            }
+
+            // --- Second Pass: Generate Mermaid Code ---
+            participants.forEach(state => {
+                mermaidCode += `    participant '${state}'\n`;
+            });
+
+            // Keep track of which entry notes have been added to avoid duplicates
+            const addedEntryNotes = new Set<number>(); // Store indices of added notes
+
+            for (let i = 0; i < elements.length; i++) {
+                const element = elements[i];
+
+                if (element.type === 'initial' && element.state) {
+                    // Find and add initial OnEntry notes immediately following the initial state log entry
+                    for (let j = i + 1; j < elements.length; j++) {
+                        const nextElement = elements[j];
+                        // Stop looking for initial notes if we hit the first transition
+                        if (nextElement.type === 'transition') {
+                            break;
+                        }
+                        if (nextElement.type === 'entryNote' && nextElement.state === element.state && nextElement.noteText) {
+                            mermaidCode += `    Note over '${nextElement.state}': ${nextElement.noteText}\n`;
+                            addedEntryNotes.add(nextElement.index);
+                        }
+                    }
+                } else if (element.type === 'transition' && element.from && element.to && element.event) {
+                    // Generate the transition arrow line
+                    let transitionLine = `    '${element.from}'->>'${element.to}': ${element.event}`;
+                    // Append associated actions if they exist
+                    if (element.actions && element.actions.length > 0) {
+                        // Append actions, keeping the "Action: " prefix for clarity
+                        transitionLine += `<br>${element.actions.join('<br>')}`;
+                    }
+                    mermaidCode += transitionLine + '\n';
+
+                    // Find and add OnEntry notes for the 'to' state that appear *after* this transition element's index
+                    // and *before* the next transition element's index.
+                    for (let j = i + 1; j < elements.length; j++) {
+                        const nextElement = elements[j];
+
+                        // Stop looking for entry notes for the current 'to' state if we hit the next transition
+                        if (nextElement.type === 'transition') {
+                            break;
+                        }
+
+                        // Add entry notes associated with the 'to' state of the current transition
+                        if (nextElement.type === 'entryNote' && nextElement.state === element.to && nextElement.noteText && !addedEntryNotes.has(nextElement.index)) {
+                            mermaidCode += `    Note over '${nextElement.state}': ${nextElement.noteText}\n`;
+                            addedEntryNotes.add(nextElement.index);
+                        }
+                    }
+                } else if (element.type === 'actionNote' && element.state && element.noteText) {
+                     // Add action notes that weren't associated with a transition (e.g., actions within a state)
+                     mermaidCode += `    Note over '${element.state}': ${element.noteText}\n`;
+                }
+                // Handle entry notes that might not have been added yet (e.g., if they occurred without a preceding transition log)
+                else if (element.type === 'entryNote' && element.state && element.noteText && !addedEntryNotes.has(element.index)) {
+                     console.warn(`[SequenceDiagram] Adding potentially orphaned entry note: ${element.noteText} for state ${element.state}`);
+                     mermaidCode += `    Note over '${element.state}': ${element.noteText}\n`;
+                     addedEntryNotes.add(element.index);
+                }
+            }
+
+            // Handle cases with no log data or no transitions
+            if (elements.length === 0 && participants.size === 0) {
+                 mermaidCode += '    Note over System: No debug session log available.\n';
+            } else if (elements.filter(e => e.type === 'transition').length === 0) {
+                 // Find the initial state from the parsed elements or default
+                 const initialStateElement = elements.find(e => e.type === 'initial');
+                 const initialStateName = (initialStateElement && typeof initialStateElement.state === 'string')
+                     ? initialStateElement.state
+                     : (participants.size > 0 && typeof participants.values().next().value === 'string')
+                         ? participants.values().next().value as string
+                         : 'System';
+
+                 if (!participants.has(initialStateName)) {
+                     mermaidCode += `    participant '${initialStateName}'\n`;
+                 }
+                 // Add initial entry notes if they exist but no transitions happened
+                 elements.forEach(el => {
+                     if (el.type === 'entryNote' && el.state === initialStateName && el.noteText && !addedEntryNotes.has(el.index)) {
+                         mermaidCode += `    Note over '${el.state}': ${el.noteText}\n`;
+                         addedEntryNotes.add(el.index);
+                     }
+                 });
+                 mermaidCode += `    Note over '${initialStateName}': No transitions recorded yet.\n`;
+            }
+
+            // Create a new text document with Mermaid code
+            const document = await vscode.workspace.openTextDocument({
+                language: 'mermaid',
+                content: mermaidCode
+            });
+            await vscode.window.showTextDocument(document, {
+                viewColumn: vscode.ViewColumn.Beside
+            });
         })
     );
 
@@ -152,7 +352,7 @@ export function activateDebugger(context: vscode.ExtensionContext, languageClien
     }
 }
 
-function createOrShowWebview(extensionUri: vscode.Uri, documentUri: string) {
+function createOrShowWebview(extensionUri: vscode.Uri, documentUri: string, subscriptions: vscode.Disposable[]) { // Add subscriptions parameter
     if (currentPanel) {
         currentPanel.reveal(vscode.ViewColumn.Beside);
         return;
@@ -168,7 +368,8 @@ function createOrShowWebview(extensionUri: vscode.Uri, documentUri: string) {
         }
     );
 
-    currentPanel.webview.onDidReceiveMessage(
+    // Register listener and add the returned disposable to the subscriptions array
+    subscriptions.push(currentPanel.webview.onDidReceiveMessage(
         message => {
             console.log('[Extension Host] Received message from webview:', message);
             switch (message.command) {
@@ -177,14 +378,13 @@ function createOrShowWebview(extensionUri: vscode.Uri, documentUri: string) {
                     const guardText = message.guard; // Get the guard text from the message
                     const currentActionState = currentState;
                     vscode.debug.activeDebugConsole.appendLine(`[stdl Debugger] Action selected: '${actionName}'${guardText ? ` [${guardText}]` : ''} in state '${currentActionState}'`);
-                    
+
                     // Log the event in our session log
                     addLogEntry('event', `Event triggered: ${actionName}${guardText ? ` [${guardText}]` : ''}`);
 
                     console.log(`[Debugger] Action selected: ${actionName}, Guard: ${guardText}`);
                     if (currentActionState && actionName && client && documentUri) {
                         console.log(`[Debugger] Sending action '${actionName}' with guard '${guardText || 'none'}' for state '${currentActionState}' to server.`);
-                        // Include the guard property in the request parameters
                         client.sendRequest<ExecuteActionResult>('stdl/executeAction', {
                             uri: documentUri,
                             currentState: currentActionState,
@@ -375,14 +575,19 @@ function createOrShowWebview(extensionUri: vscode.Uri, documentUri: string) {
                 case 'clearLog':
                     clearSessionLog();
                     break;
+                case 'generateSequenceDiagram':
+                    console.log('[Debugger] Generate Sequence Diagram requested from webview.');
+                    vscode.commands.executeCommand('stdl.showSequenceDiagram');
+                    break;
                 default:
                     console.warn('[Extension Host] Received unknown command from webview:', message.command);
             }
         },
-        undefined,
-    );
+        undefined // thisArg remains undefined
+    ));
 
-    currentPanel.onDidDispose(
+    // Register listener and add the returned disposable to the subscriptions array
+    subscriptions.push(currentPanel.onDidDispose(
         () => {
             if (currentState !== null) {
                  vscode.debug.activeDebugConsole.appendLine(`[stdl Debugger] Debugger panel closed.`);
@@ -392,8 +597,8 @@ function createOrShowWebview(extensionUri: vscode.Uri, documentUri: string) {
             currentState = null;
             console.log('[Debugger] Webview panel disposed.');
         },
-        null
-    );
+        null // thisArg remains null
+    ));
 }
 
 // Function to reveal and highlight a state in the editor
@@ -558,28 +763,17 @@ function getWebviewContent(webview: vscode.Webview, stateData: StateData, curren
     }
 
     if (stateData.transitions && Object.keys(stateData.transitions).length > 0) {
-        for (const eventName of Object.keys(stateData.transitions)) {
-            const transitionsForEvent = stateData.transitions[eventName];
-            if (transitionsForEvent && transitionsForEvent.length > 0) {
-                transitionsForEvent.forEach(transition => {
-                    const guardText = transition.guard || ''; // Get guard text, default to empty string
-                    const escapedGuardText = guardText.replace(/'/g, "\\'"); // Escape single quotes for JavaScript
-                    const guardDisplay = guardText ? ` [${guardText}]` : ''; // Text for display
-                    let details = '';
-                    if (transition.target === currentStateName && transition.action) {
-                        details = ` (Actions: ${transition.action})`;
-                    } else {
-                        details = ` -> ${transition.target}`;
-                    }
-                    // Pass both eventName and escapedGuardText to selectAction
-                    actionsHtml += `<li><button onclick="selectAction('${eventName}', '${escapedGuardText}')">${eventName}${guardDisplay}</button>${details}</li>`;
-                });
-            } else {
-                actionsHtml += `<li>${eventName} (No defined transitions)</li>`;
-            }
+        for (const event in stateData.transitions) {
+            if (event === '__initialTransition') continue; // Skip internal initial transition
+            stateData.transitions[event].forEach(transition => {
+                const guardText = transition.guard ? ` [${transition.guard}]` : '';
+                const actionText = transition.action ? ` / ${transition.action}` : '';
+                // Use data attributes for guard to avoid issues with quotes in onclick
+                actionsHtml += `<li><button data-event="${event}" data-guard="${transition.guard || ''}" onclick="selectAction(this.dataset.event, this.dataset.guard)">${event}${guardText}</button> -> ${transition.target}${actionText}</li>`;
+            });
         }
     } else {
-        actionsHtml += '<li><i>No events defined for this state.</i></li>';
+        actionsHtml += '<li>No outgoing transitions defined for this state.</li>';
     }
     actionsHtml += '</ul>';
 
@@ -594,6 +788,7 @@ function getWebviewContent(webview: vscode.Webview, stateData: StateData, curren
                 <button id="sort-toggle" onclick="toggleSortOrder()">Sort: Newest First</button>
                 <button onclick="clearLog()">Clear Log</button>
                 <button onclick="copyLogToClipboard()">Copy to Clipboard</button>
+                <button onclick="generateSequenceDiagram()">Generate Sequence Diagram</button>
             </div>
             <div id="log-container">
                 <!-- Log entries will be rendered here by JavaScript -->
@@ -603,347 +798,218 @@ function getWebviewContent(webview: vscode.Webview, stateData: StateData, curren
 
     const stopButtonHtml = `<button class="stop" onclick="stopDebugging()">Stop Debugging</button>`;
 
+    // Construct the full HTML content
     return `<!DOCTYPE html>
-    <html lang="en">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>stdl Debugger</title>
-        <style>
-            body {
-                font-family: var(--vscode-font-family, sans-serif);
-                padding: 1em;
-                color: var(--vscode-editor-foreground);
-                background-color: var(--vscode-editor-background);
-                display: flex;
-                flex-direction: column;
-                height: 97vh;
-            }
-            h1, h3 {
-                color: var(--vscode-textLink-foreground);
-            }
-            button {
-                margin: 0.2em;
-                padding: 0.5em 1em;
-                cursor: pointer;
-                border: 1px solid var(--vscode-button-border, var(--vscode-contrastBorder, transparent));
-                background-color: var(--vscode-button-background);
-                color: var(--vscode-button-foreground);
-                border-radius: 4px;
-                transition: background-color 0.2s ease;
-            }
-            button:hover {
-                background-color: var(--vscode-button-hoverBackground);
-            }
-            .current-state {
-                font-weight: bold;
-                font-size: 1.3em;
-                margin-bottom: 0.8em;
-                color: var(--vscode-textLink-activeForeground);
-            }
-            .state-details {
-                margin-bottom: 1.5em;
-                padding: 1em;
-                border: 1px solid var(--vscode-editorWidget-border, var(--vscode-contrastBorder, #ccc));
-                border-radius: 6px;
-                background-color: var(--vscode-editorWidget-background, var(--vscode-sideBar-background));
-            }
-            ul {
-                list-style: none;
-                padding-left: 0;
-            }
-            li {
-                margin-bottom: 0.5em;
-                display: flex;
-                align-items: center;
-            }
-            li button {
-                 margin-right: 0.5em;
-            }
-            li span {
-                color: var(--vscode-descriptionForeground);
-            }
-            .log-section {
-                margin-top: 1.5em;
-                flex-grow: 1;
-                display: flex;
-                flex-direction: column;
-            }
-            .log-controls {
-                display: flex;
-                justify-content: flex-end;
-                gap: 0.5em; /* Add some space between buttons */
-                margin-bottom: 0.5em;
-            }
-            #log-container {
-                border: 1px solid var(--vscode-editorWidget-border, var(--vscode-contrastBorder, #ccc));
-                background-color: var(--vscode-editorWidget-background, var(--vscode-editor-background));
-                border-radius: 4px;
-                padding: 0.5em;
-                overflow-y: auto;
-                flex-grow: 1;
-                font-family: var(--vscode-editor-font-family, monospace);
-                font-size: var(--vscode-editor-font-size, 12px);
-                min-height: 200px;
-            }
-            .log-entry {
-                padding: 0.2em;
-                border-bottom: 1px solid var(--vscode-editorWidget-border);
-                display: flex;
-            }
-            .log-timestamp {
-                color: var(--vscode-descriptionForeground);
-                margin-right: 0.5em;
-                width: 160px;
-                flex-shrink: 0;
-            }
-            .log-message {
-                white-space: pre-wrap;
-            }
-            .log-state {
-                color: var(--vscode-textLink-activeForeground);
-                font-weight: bold;
-            }
-            .log-event {
-                color: var(--vscode-symbolIcon-eventForeground, orange);
-            }
-            .log-action {
-                color: var(--vscode-gitDecoration-modifiedResourceForeground, lightblue);
-            }
-            .log-entry.log-entry, .log-entry.log-exit {
-                color: var(--vscode-terminal-ansiGreen, green);
-            }
-            .log-error {
-                color: var(--vscode-errorForeground, red);
-            }
-            button.stop {
-                background-color: var(--vscode-errorForeground);
-                color: var(--vscode-button-foreground);
-                border: none;
-                margin-top: 1em;
-                margin-bottom: 1em;
-            }
-            button.stop:hover {
-                opacity: 0.8;
-            }
-            hr {
-                border: none;
-                border-top: 1px solid var(--vscode-editorWidget-border, var(--vscode-contrastBorder, #ccc));
-                margin: 1em 0;
-            }
-            .controls-section {
-                margin-top: auto;
-            }
-        </style>
-    </head>
-    <body>
-        <h1>STDL State Machine Debugger</h1>
-        <div class="controls-section">
-            ${stopButtonHtml}
-        </div>
-        <div class="current-state">Current State: ${currentStateName}</div>
-        <div class="state-details">
-            ${entryExitHtml || '<p><i>No entry/exit actions defined.</i></p>'}
-        </div>
-        ${actionsHtml}
-        ${logAreaHtml}
-        <hr>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>STDL Debugger</title>
+    <style>
+        body {
+            font-family: var(--vscode-font-family, sans-serif);
+            padding: 1em;
+            background-color: var(--vscode-editor-background, #1e1e1e);
+            color: var(--vscode-editor-foreground, #d4d4d4);
+        }
+        h2, h3 {
+            margin-top: 1em;
+            margin-bottom: 0.5em;
+            color: var(--vscode-editor-foreground, #d4d4d4);
+        }
+        ul {
+            list-style: none;
+            padding-left: 0;
+        }
+        li {
+            margin-bottom: 0.5em;
+        }
+        button {
+            padding: 0.5em 1em;
+            margin-right: 0.5em;
+            cursor: pointer;
+            border: 1px solid var(--vscode-button-border, #444);
+            border-radius: 4px;
+            background-color: var(--vscode-button-background, #2d2d2d);
+            color: var(--vscode-button-foreground, #d4d4d4);
+            transition: background 0.2s, color 0.2s;
+        }
+        button:hover {
+            background-color: var(--vscode-button-hoverBackground, #37373d);
+            color: var(--vscode-button-foreground, #fff);
+        }
+        .stop {
+            background-color: var(--vscode-editorError-foreground, #f44336);
+            color: #fff;
+            border: none;
+        }
+        .stop:hover {
+            background-color: #da190b;
+        }
+        .log-section {
+            margin-top: 2em;
+            border-top: 1px solid var(--vscode-panel-border, #333);
+            padding-top: 1em;
+        }
+        #log-container {
+            max-height: 300px;
+            overflow-y: auto;
+            border: 1px solid var(--vscode-panel-border, #333);
+            padding: 0.5em;
+            background-color: var(--vscode-editorWidget-background, #232323);
+            font-family: var(--vscode-editor-font-family, monospace);
+            white-space: pre-wrap;
+            color: var(--vscode-editor-foreground, #d4d4d4);
+        }
+        .log-entry {
+            margin-bottom: 0.3em;
+            padding-bottom: 0.3em;
+            border-bottom: 1px dotted var(--vscode-panel-border, #444);
+        }
+        .log-entry:last-child {
+            border-bottom: none;
+        }
+        .log-timestamp {
+            color: var(--vscode-editorLineNumber-foreground, #888);
+            margin-right: 0.5em;
+        }
+        .log-type-state {
+            color: var(--vscode-charts-blue, #4FC3F7);
+            font-weight: bold;
+        }
+        .log-type-event {
+            color: var(--vscode-charts-green, #81C784);
+            font-weight: bold;
+            background: rgba(129,199,132,0.08);
+            border-radius: 3px;
+            padding: 0 2px;
+        }
+        .log-type-action {
+            color: var(--vscode-charts-purple, #BA68C8);
+        }
+        .log-type-entry {
+            color: var(--vscode-charts-cyan, #26C6DA);
+        }
+        .log-type-exit {
+            color: var(--vscode-charts-orange, #FFB74D);
+        }
+        .log-type-info {
+            color: var(--vscode-editorInfo-foreground, #82aaff);
+        }
+        .log-type-error {
+            color: var(--vscode-editorError-foreground, #f44336);
+            font-weight: bold;
+        }
+        .log-controls {
+            margin-bottom: 1em;
+        }
+    </style>
+</head>
+<body>
+    <h2>Current State: ${currentStateName}</h2>
+    ${entryExitHtml}
+    ${actionsHtml}
+    ${stopButtonHtml}
+    ${logAreaHtml}
 
-        <script>
-            const vscode = acquireVsCodeApi();
+    <script>
+        const vscode = acquireVsCodeApi();
+        let logEntries = ${initialLogDataJson}; // Initial log data
+        let sortOrder = 'newest'; // 'newest' or 'oldest'
 
-            // Store log entries (including sequence) and sort order locally in the webview
-            let webviewLogEntries = []; // Will store { timestamp, type, message, sequence }
-            let sortOrder = 'newest'; // 'newest' or 'oldest'
+        function selectAction(event, guard) {
+            vscode.postMessage({ command: 'actionSelected', action: event, guard: guard });
+        }
 
-            // Get references to DOM elements
-            const logContainer = document.getElementById('log-container');
-            const sortToggleButton = document.getElementById('sort-toggle');
+        function stopDebugging() {
+            vscode.postMessage({ command: 'stopDebugging' });
+        }
 
-            // Function to create a single log entry element
-            function createLogElement(entry) {
-                const entryElement = document.createElement('div');
-                entryElement.className = \`log-entry log-\${entry.type}\`;
+        function clearLog() {
+            vscode.postMessage({ command: 'clearLog' });
+            logEntries = []; // Clear local log data
+            renderLog(); // Re-render empty log
+        }
+
+        function copyLogToClipboard() {
+            const logText = logEntries.map(entry => \`\${entry.timestamp} | \${entry.message}\`).join('\\n');
+            navigator.clipboard.writeText(logText).then(() => {
+                // Optional: Show feedback to the user
+                console.log('Log copied to clipboard');
+            }).catch(err => {
+                console.error('Failed to copy log:', err);
+            });
+        }
+
+        function generateSequenceDiagram() {
+             vscode.postMessage({ command: 'generateSequenceDiagram' });
+        }
+
+        function toggleSortOrder() {
+            sortOrder = (sortOrder === 'newest') ? 'oldest' : 'newest';
+            const button = document.getElementById('sort-toggle');
+            button.textContent = \`Sort: \${sortOrder === 'newest' ? 'Newest First' : 'Oldest First'}\`;
+            renderLog();
+        }
+
+        function renderLog() {
+            const container = document.getElementById('log-container');
+            container.innerHTML = ''; // Clear existing logs
+
+            const sortedEntries = [...logEntries]; // Create a copy to sort
+            if (sortOrder === 'newest') {
+                sortedEntries.sort((a, b) => b.sequence - a.sequence); // Sort by sequence descending
+            } else {
+                sortedEntries.sort((a, b) => a.sequence - b.sequence); // Sort by sequence ascending
+            }
+
+            sortedEntries.forEach(entry => {
+                const div = document.createElement('div');
+                div.classList.add('log-entry');
+                div.classList.add(\`log-type-\${entry.type}\`); // Add type-specific class
 
                 const timestampSpan = document.createElement('span');
-                timestampSpan.className = 'log-timestamp';
+                timestampSpan.classList.add('log-timestamp');
                 timestampSpan.textContent = entry.timestamp;
 
                 const messageSpan = document.createElement('span');
-                messageSpan.className = 'log-message';
                 messageSpan.textContent = entry.message;
 
-                entryElement.appendChild(timestampSpan);
-                entryElement.appendChild(messageSpan);
-                return entryElement;
-            }
-
-            // Function to render all log entries based on current sort order
-            function renderLogEntries() {
-                if (!logContainer) return;
-                logContainer.innerHTML = ''; // Clear existing entries
-
-                // Sort a copy: Primary key timestamp, Secondary key sequence
-                const sortedEntries = [...webviewLogEntries].sort((a, b) => {
-                    const dateA = new Date(a.timestamp.replace(' ', 'T') + 'Z');
-                    const dateB = new Date(b.timestamp.replace(' ', 'T') + 'Z');
-                    const timestampDiff = sortOrder === 'newest' ? dateB - dateA : dateA - dateB;
-
-                    if (timestampDiff !== 0) {
-                        return timestampDiff;
-                    }
-                    // For 'newest', sort sequence descending; for 'oldest', ascending
-                    return sortOrder === 'newest' ? b.sequence - a.sequence : a.sequence - b.sequence;
-                });
-
-                sortedEntries.forEach(entry => {
-                    logContainer.appendChild(createLogElement(entry));
-                });
-
-                // Update button text
-                sortToggleButton.textContent = sortOrder === 'newest' ? 'Sort: Newest First' : 'Sort: Oldest First';
-
-                // Scroll to appropriate position
-                if (sortOrder === 'newest') {
-                    logContainer.scrollTop = 0; // Scroll to top
-                } else {
-                    logContainer.scrollTop = logContainer.scrollHeight; // Scroll to bottom
-                }
-            }
-
-            // Function to add a single new log entry to the view
-            function addLogEntryToView(entry) { // entry now includes sequence
-                if (!logContainer) return;
-
-                // Add to our local store (including sequence)
-                webviewLogEntries.push(entry);
-
-                // Create the element
-                const entryElement = createLogElement(entry);
-
-                // Add to the DOM based on sort order
-                // Note: We don't re-sort the whole list here for performance.
-                // We just append/prepend based on the current view order.
-                // The full sort happens on initial load and when toggling sort.
-                if (sortOrder === 'newest') {
-                    logContainer.insertBefore(entryElement, logContainer.firstChild);
-                    logContainer.scrollTop = 0; // Scroll to top to see the new entry
-                } else {
-                    logContainer.appendChild(entryElement);
-                    logContainer.scrollTop = logContainer.scrollHeight; // Scroll to bottom
-                }
-            }
-
-            // Function to clear the log view and local store
-            function clearLogView() {
-                webviewLogEntries = [];
-                if (logContainer) {
-                    logContainer.innerHTML = '';
-                }
-            }
-
-            // Function to toggle sort order and re-render
-            function toggleSortOrder() {
-                sortOrder = (sortOrder === 'newest' ? 'oldest' : 'newest');
-                renderLogEntries(); // Re-render applies the new sort order
-            }
-
-            // Function to copy log to clipboard, respecting sort order
-            function copyLogToClipboard() {
-                if (!logContainer) return;
-
-                // Sort a copy based on the current view order (timestamp primary, sequence secondary)
-                 const sortedEntries = [...webviewLogEntries].sort((a, b) => {
-                    const dateA = new Date(a.timestamp.replace(' ', 'T') + 'Z');
-                    const dateB = new Date(b.timestamp.replace(' ', 'T') + 'Z');
-                    const timestampDiff = sortOrder === 'newest' ? dateB - dateA : dateA - dateB;
-
-                    if (timestampDiff !== 0) {
-                        return timestampDiff;
-                    }
-                    return sortOrder === 'newest' ? b.sequence - a.sequence : a.sequence - b.sequence; // Secondary sort by sequence
-                });
-
-                let logText = '';
-                sortedEntries.forEach(entry => {
-                    logText += \`\${entry.timestamp} \${entry.message}\\n\`;
-                });
-
-                navigator.clipboard.writeText(logText).then(
-                    () => console.log('Log copied to clipboard'),
-                    err => console.error('Failed to copy log: ', err)
-                );
-
-                // Send a message to show the success notification in VS Code
-                vscode.postMessage({
-                    command: 'logCopied'
-                });
-            }
-
-            // Function to send clear log command to extension
-            function clearLog() {
-                vscode.postMessage({
-                    command: 'clearLog'
-                });
-            }
-
-            // Handle messages from the extension
-            window.addEventListener('message', event => {
-                const message = event.data;
-                switch (message.command) {
-                    case 'addLogEntry':
-                        addLogEntryToView(message.entry); // entry includes sequence
-                        break;
-                    case 'clearLog':
-                        clearLogView();
-                        break;
-                    case 'logCopied':
-                         // Optionally show a VS Code notification
-                         // vscode.postMessage({ command: 'showInfoMessage', text: 'Log copied!' });
-                         break;
-                }
+                div.appendChild(timestampSpan);
+                div.appendChild(messageSpan);
+                container.appendChild(div);
             });
 
-            // Initial setup
-            try {
-                // Load initial log data passed from the extension
-                const initialData = ${initialLogDataJson};
-                if (Array.isArray(initialData)) {
-                    // Ensure sequence numbers are present if loading older data structure (optional robustness)
-                    webviewLogEntries = initialData.map((entry, index) => ({
-                        ...entry,
-                        sequence: entry.sequence !== undefined ? entry.sequence : index
-                    }));
-                } else {
-                     console.error("Failed to parse initial log data:", initialData);
-                     webviewLogEntries = [];
-                }
-            } catch (e) {
-                console.error("Error parsing initial log data:", e);
-                webviewLogEntries = []; // Fallback to empty log
+            // Scroll to bottom if sorted newest first
+            if (sortOrder === 'newest') {
+                container.scrollTop = container.scrollHeight;
+            } else {
+                 container.scrollTop = 0; // Scroll to top if sorted oldest first
             }
+        }
 
-            // Initial render of the log
-            renderLogEntries();
-
-            // Implement selectAction to send both action and guard to extension
-            function selectAction(actionName, guardText) {
-                vscode.postMessage({
-                    command: 'actionSelected',
-                    action: actionName,
-                    guard: guardText
-                });
+        // Handle messages from the extension
+        window.addEventListener('message', event => {
+            const message = event.data;
+            switch (message.command) {
+                case 'addLogEntry':
+                    logEntries.push(message.entry);
+                    renderLog(); // Re-render log with the new entry
+                    break;
+                case 'clearLog':
+                    logEntries = [];
+                    renderLog();
+                    break;
+                // Add other message handlers if needed
             }
+        });
 
-            // Implement stopDebugging to send stop command to extension
-            function stopDebugging() {
-                vscode.postMessage({
-                    command: 'stopDebugging'
-                });
-            }
-        </script>
-    </body>
-    </html>`;
+        // Initial render of the log
+        renderLog();
+
+    </script>
+</body>
+</html>`;
 }
 
 export function deactivateDebugger() {

@@ -6,7 +6,7 @@
     "publisher": "jbaker8935",
     "license": "MIT",
     "licenseFile": "LICENSE.md",
-    "version": "0.1.1",
+    "version": "0.1.2",
     "engines": {
         "vscode": "^1.59.0"
     },
@@ -15,7 +15,10 @@
         "url": "https://github.com/jbaker8935/stdl.git"
     },
     "activationEvents": [
-        "onLanguage:stdl"
+        "onLanguage:stdl",
+        "onDebug",
+        "onCommand:stdl.showStateDiagram",
+        "onCommand:stdl.showSequenceDiagram"
     ],
     "main": "./out/extension.js",
     "categories": [
@@ -54,6 +57,21 @@
                 "title": "stdl: Show All States",
                 "category": "stdl",
                 "icon": "$(list-tree)"
+            },
+            {
+                "command": "stdl.showStateDiagram",
+                "title": "STDL: Show State Diagram",
+                "category": "STDL"
+            },
+            {
+                "command": "stdl.showSequenceDiagram",
+                "title": "STDL: Show Debug Sequence Diagram",
+                "category": "STDL"
+            },
+            {
+                "command": "stdl.showStateDiagramContext",
+                "title": "Show State Diagram (Mermaid)",
+                "category": "STDL"
             }
         ],
         "menus": {
@@ -71,6 +89,20 @@
                 },
                 {
                     "command": "stdl.showAllStates",
+                    "when": "resourceLangId == stdl"
+                }
+            ],
+            "explorer/context": [
+                {
+                    "command": "stdl.showStateDiagramContext",
+                    "title": "Show State Diagram (Mermaid)",
+                    "when": "resourceLangId == stdl"
+                }
+            ],
+            "editor/context": [
+                {
+                    "command": "stdl.showStateDiagram",
+                    "title": "Show State Diagram",
                     "when": "resourceLangId == stdl"
                 }
             ]
@@ -111,7 +143,8 @@
         "eslint": "^8.41.0",
         "glob": "^10.2.5",
         "mocha": "^10.2.0",
-        "typescript": "^5.1.3"
+        "typescript": "^5.1.3",
+        "mermaid": "^10.9.0"
     },
     "dependencies": {
         "vscode-languageclient": "^7.0.0",
