@@ -49,8 +49,8 @@
     "comments": {
       "patterns": [
         {
-          "match": "//.*",
-          "name": "comment.line.double-slash.stdl"
+          "name": "comment.line.double-slash.stdl",
+          "match": "//.*$"
         }
       ]
     },
@@ -128,13 +128,16 @@
     "transition": {
       "patterns": [
         {
-          "match": "^(\\s*->\\s*)(\\w[^#]*)",
+          "match": "^(\\s*->\\s*)(\\w[^#\/]*)?(\\s*//.*)?$",
           "captures": {
             "1": {
               "name": "keyword.operator.transition.stdl"
             },
             "2": {
               "name": "entity.name.class.stdl"
+            },
+            "3": {
+              "name": "comment.line.double-slash.stdl"
             }
           }
         }

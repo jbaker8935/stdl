@@ -255,50 +255,71 @@ export function activateDebugger(context: vscode.ExtensionContext, languageClien
                     // Find and add initial OnEntry notes immediately following the initial state log entry
                     for (let j = i + 1; j < elements.length; j++) {
                         const nextElement = elements[j];
-                        // Stop looking for initial notes if we hit the first transition
                         if (nextElement.type === 'transition') {
                             break;
                         }
-                        if (nextElement.type === 'entryNote' && nextElement.state === element.state && nextElement.noteText) {
-                            mermaidCode += `    Note over '${nextElement.state}': ${nextElement.noteText}\n`;
-                            addedEntryNotes.add(nextElement.index);
+                        // Do not add OnEntry notes if the note is a comment (starts with '//')
+                        if (nextElement.type === 'entryNote' && nextElement.state === element.state && nextElement.noteText && !nextElement.noteText.trim().startsWith('//')) {
+                            // Only include the action name before any comment
+                            const actionText = nextElement.noteText.split('//')[0].trim();
+                            if (actionText) {
+                                mermaidCode += `    Note over '${nextElement.state}': ${actionText}\n`;
+                                addedEntryNotes.add(nextElement.index);
+                            }
                         }
                     }
                 } else if (element.type === 'transition' && element.from && element.to && element.event) {
                     // Generate the transition arrow line
                     let transitionLine = `    '${element.from}'->>'${element.to}': ${element.event}`;
-                    // Append associated actions if they exist
                     if (element.actions && element.actions.length > 0) {
-                        // Append actions, keeping the "Action: " prefix for clarity
-                        transitionLine += `<br>${element.actions.join('<br>')}`;
+                        // Filter out stdl comments and OnExit actions for self-transitions from the label
+                        const filteredActions = element.actions.filter(a => {
+                            const isComment = a.trim().startsWith('//');
+                            const isExitNoteForSelfTransition = element.from === element.to && a.startsWith('OnExit action:');
+                            const isEntryNoteForSelfTransition = element.from === element.to && a.startsWith('OnEntry action:');
+                            return !isComment && !isExitNoteForSelfTransition && !isEntryNoteForSelfTransition;
+                        });
+                        if (filteredActions.length > 0) {
+                            transitionLine += `<br>${filteredActions.join('<br>')}`;
+                        }
                     }
                     mermaidCode += transitionLine + '\n';
 
-                    // Find and add OnEntry notes for the 'to' state that appear *after* this transition element's index
-                    // and *before* the next transition element's index.
-                    for (let j = i + 1; j < elements.length; j++) {
-                        const nextElement = elements[j];
-
-                        // Stop looking for entry notes for the current 'to' state if we hit the next transition
-                        if (nextElement.type === 'transition') {
-                            break;
-                        }
-
-                        // Add entry notes associated with the 'to' state of the current transition
-                        if (nextElement.type === 'entryNote' && nextElement.state === element.to && nextElement.noteText && !addedEntryNotes.has(nextElement.index)) {
-                            mermaidCode += `    Note over '${nextElement.state}': ${nextElement.noteText}\n`;
-                            addedEntryNotes.add(nextElement.index);
+                    // Only add OnEntry notes if not a self-transition
+                    if (element.from !== element.to) {
+                        for (let j = i + 1; j < elements.length; j++) {
+                            const nextElement = elements[j];
+                            if (nextElement.type === 'transition') {
+                                break;
+                            }
+                            // Do not add OnEntry notes if the note is a comment (starts with '//')
+                            if (nextElement.type === 'entryNote' && nextElement.state === element.to && nextElement.noteText && !nextElement.noteText.trim().startsWith('//') && !addedEntryNotes.has(nextElement.index)) {
+                                const actionText = nextElement.noteText.split('//')[0].trim();
+                                if (actionText) {
+                                    mermaidCode += `    Note over '${nextElement.state}': ${actionText}\n`;
+                                    addedEntryNotes.add(nextElement.index);
+                                }
+                            }
                         }
                     }
-                } else if (element.type === 'actionNote' && element.state && element.noteText) {
-                     // Add action notes that weren't associated with a transition (e.g., actions within a state)
-                     mermaidCode += `    Note over '${element.state}': ${element.noteText}\n`;
+                } else if (element.type === 'actionNote' && element.state && element.noteText && !element.noteText.trim().startsWith('//')) {
+                    const actionText = element.noteText.split('//')[0].trim();
+                    if (actionText) {
+                        mermaidCode += `    Note over '${element.state}': ${actionText}\n`;
+                    }
                 }
                 // Handle entry notes that might not have been added yet (e.g., if they occurred without a preceding transition log)
-                else if (element.type === 'entryNote' && element.state && element.noteText && !addedEntryNotes.has(element.index)) {
-                     console.warn(`[SequenceDiagram] Adding potentially orphaned entry note: ${element.noteText} for state ${element.state}`);
-                     mermaidCode += `    Note over '${element.state}': ${element.noteText}\n`;
-                     addedEntryNotes.add(element.index);
+                else if (element.type === 'entryNote' && element.state && element.noteText && !addedEntryNotes.has(element.index) && !element.noteText.trim().startsWith('//')) {
+                    // Do not add entry notes for self-transitions
+                    const isSelfTransition = elements.some(e => e.type === 'transition' && e.from === e.to && e.to === element.state);
+                    if (!isSelfTransition) {
+                        console.warn(`[SequenceDiagram] Adding potentially orphaned entry note: ${element.noteText} for state ${element.state}`);
+                        const actionText = element.noteText.split('//')[0].trim();
+                        if (actionText) {
+                            mermaidCode += `    Note over '${element.state}': ${actionText}\n`;
+                            addedEntryNotes.add(element.index);
+                        }
+                    }
                 }
             }
 
@@ -320,8 +341,11 @@ export function activateDebugger(context: vscode.ExtensionContext, languageClien
                  // Add initial entry notes if they exist but no transitions happened
                  elements.forEach(el => {
                      if (el.type === 'entryNote' && el.state === initialStateName && el.noteText && !addedEntryNotes.has(el.index)) {
-                         mermaidCode += `    Note over '${el.state}': ${el.noteText}\n`;
-                         addedEntryNotes.add(el.index);
+                         const actionText = el.noteText.split('//')[0].trim();
+                         if (actionText) {
+                             mermaidCode += `    Note over '${el.state}': ${actionText}\n`;
+                             addedEntryNotes.add(el.index);
+                         }
                      }
                  });
                  mermaidCode += `    Note over '${initialStateName}': No transitions recorded yet.\n`;
@@ -768,7 +792,8 @@ function getWebviewContent(webview: vscode.Webview, stateData: StateData, curren
             stateData.transitions[event].forEach(transition => {
                 const guardText = transition.guard ? ` [${transition.guard}]` : '';
                 const actionText = transition.action ? ` / ${transition.action}` : '';
-                // Use data attributes for guard to avoid issues with quotes in onclick
+                // When parsing transitions, ignore comments after the target state
+                // (This is handled in the state machine model/server, but if parsing is needed here, strip after '->' and before '//')
                 actionsHtml += `<li><button data-event="${event}" data-guard="${transition.guard || ''}" onclick="selectAction(this.dataset.event, this.dataset.guard)">${event}${guardText}</button> -> ${transition.target}${actionText}</li>`;
             });
         }
