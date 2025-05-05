@@ -2,15 +2,21 @@
 
 VS Code language extension for a simple state machine description language with symantics borrowed liberally from UML State Machines
 
-The language is intended as an easy to use, limited scope capability to describe simple state machines in text with some syntax and symantic checking.  The syntax is simple enough to be understood by a non-technical audience.
+The language is an easy to use, intentionally limited scope capability to describe simple state machines in text with some syntax and symantic checking in the editor.  The syntax is simple enough to be understood by a non-technical audience.
 
 The editor supports listing references to a state and clicking a transition target to go to the state definition.
 
 The extension also supports a simple debugger to allow walking through the state machine.   Users select from available events,  Actions are logged to a debugger session log.
 
-STDL can be output as a mermaid state diagram.   The session log can be output as a mermaid sequence diagram.
-
 ![screenshot](https://raw.githubusercontent.com/jbaker8935/stdl/refs/heads/master/images/Screenshot.png)
+
+
+STDL can be output as a mermaid state diagram which can be rendered by installing a mermaid extension.   
+![screenshot](https://raw.githubusercontent.com/jbaker8935/stdl/refs/heads/master/images/Screenshot_Mermaid_State.png)
+
+The debug session log can be output as a mermaid sequence diagram.
+
+![screenshot](https://raw.githubusercontent.com/jbaker8935/stdl/refs/heads/master/images/Screenshot_Mermaid_Sequence.png)
 
 Example:
 ```
@@ -54,8 +60,5 @@ States have three special keywords:
 
 - Actions and Guard Conditions are free text and have no symantics
 
-
-
 There are more examples in the [repository](https://github.com/jbaker8935/stdl).
-
 
