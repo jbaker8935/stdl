@@ -8,6 +8,8 @@ The editor supports listing references to a state and clicking a transition targ
 
 The extension also supports a simple debugger to allow walking through the state machine.   Users select from available events,  Actions are logged to a debugger session log.
 
+STDL can be output as a mermaid state diagram.   The session log can be output as a mermaid sequence diagram.
+
 ![screenshot](https://raw.githubusercontent.com/jbaker8935/stdl/refs/heads/master/images/Screenshot.png)
 
 Example:
