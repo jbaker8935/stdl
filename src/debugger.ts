@@ -272,13 +272,16 @@ export function activateDebugger(context: vscode.ExtensionContext, languageClien
                     // Generate the transition arrow line
                     let transitionLine = `    '${element.from}'->>'${element.to}': ${element.event}`;
                     if (element.actions && element.actions.length > 0) {
-                        // Filter out stdl comments and OnExit actions for self-transitions from the label
+                        // Filter out stdl comments and OnExit/OnEntry actions for self-transitions from the label
                         const filteredActions = element.actions.filter(a => {
                             const isComment = a.trim().startsWith('//');
                             const isExitNoteForSelfTransition = element.from === element.to && a.startsWith('OnExit action:');
                             const isEntryNoteForSelfTransition = element.from === element.to && a.startsWith('OnEntry action:');
                             return !isComment && !isExitNoteForSelfTransition && !isEntryNoteForSelfTransition;
-                        });
+                        }).map(a => {
+                            // Strip out any inline comments from the action text
+                            return a.split('//')[0].trim();
+                        }).filter(a => a.length > 0);
                         if (filteredActions.length > 0) {
                             transitionLine += `<br>${filteredActions.join('<br>')}`;
                         }
