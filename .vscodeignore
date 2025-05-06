@@ -3,6 +3,7 @@
 node_modules/**
 out/**
 !out/extension.bundle.js
+!out/server.bundle.js
 src/**
 tsconfig.json
 webpack.config.js

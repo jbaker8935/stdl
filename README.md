@@ -2,7 +2,7 @@
 
 VS Code language extension for a simple state machine description language with symantics borrowed liberally from UML State Machines
 
-The language is an easy to use, intentionally limited scope capability to describe simple state machines in text with some syntax and symantic checking in the editor.  The syntax is simple enough to be understood by a non-technical audience.
+The language is an easy to use, intentionally limited scope capability to describe simple state machines in text with some syntax and semantic checking in the editor.  The syntax is simple enough to be understood by a non-technical audience.
 
 The editor supports listing references to a state and clicking a transition target to go to the state definition.
 

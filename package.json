@@ -132,7 +132,7 @@
     "scripts": {
         "vscode:prepublish": "npm run bundle",
         "compile": "tsc -b",
-        "bundle": "npm run compile && esbuild ./out/extension.js --bundle --outfile=./out/extension.bundle.js --platform=node --target=node18 --minify --external:vscode",
+        "bundle": "npm run compile && esbuild ./out/extension.js --bundle --outfile=./out/extension.bundle.js --platform=node --target=node18 --minify --external:vscode && esbuild ./out/server.js --bundle --outfile=./out/server.bundle.js --platform=node --target=node18 --minify",
         "watch": "tsc -b -w",
         "lint": "eslint src --ext ts"
     },

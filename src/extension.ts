@@ -35,7 +35,7 @@ export async function activate(context: vscode.ExtensionContext) { // Make activ
     console.log('STDL extension activating.');
 
     // Server options
-    const serverModule = context.asAbsolutePath(path.join('out', 'server.js'));
+    const serverModule = context.asAbsolutePath(path.join('out', 'server.bundle.js'));
     const debugOptions = { execArgv: ['--nolazy', '--inspect=6009'] };
     const serverOptions: ServerOptions = {
         run: { module: serverModule, transport: TransportKind.ipc },
