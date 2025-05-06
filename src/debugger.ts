@@ -482,62 +482,108 @@ function createOrShowWebview(extensionUri: vscode.Uri, documentUri: string, subs
                                 
                                 // This function continues the state transition after actions have been processed
                                 function continueStateTransition(targetRange?: LspRange) { // Accept range
-                                    // THEN log OnExit actions from the current state
-                                    if (oldStateData && oldStateData.onExit && oldStateData.onExit.length > 0) {
-                                        oldStateData.onExit.forEach((exitAction: string) => {
-                                            addLogEntry('exit', `OnExit action: ${exitAction}`);
-                                            vscode.debug.activeDebugConsole.appendLine(`[stdl Debugger] Executing OnExit action: ${exitAction}`);
-                                        });
-                                    }
-                                    
-                                    // Update state and log state transition - ensure newState is treated as non-null since we checked above
-                                    const newState = response.newState as string;
-                                    currentState = newState;
-                                    addLogEntry('state', `Transitioned to state: ${newState}`);
-
-                                    // Reveal and highlight the new state in the editor
-                                    if (targetRange) { // Check if the range was provided
-                                        revealStateInEditor(documentUri, targetRange); // Call reveal here
-                                    }
-                                    
-                                    // Log OnEntry actions for the new state
-                                    const newStateData = currentStateMachine?.states[newState];
-                                    if (newStateData && newStateData.onEntry && newStateData.onEntry.length > 0) {
-                                        newStateData.onEntry.forEach((action: string) => {
-                                            addLogEntry('entry', `OnEntry action: ${action}`);
-                                            vscode.debug.activeDebugConsole.appendLine(`[stdl Debugger] Executing OnEntry action: ${action}`);
-                                        });
-                                    }
-
-                                    // Check for automatic Initial transition after OnEntry actions
-                                    if (newStateData && newStateData.transitions && newStateData.transitions['__initialTransition']) {
-                                        const initialTransitions = newStateData.transitions['__initialTransition'];
-                                        if (initialTransitions && initialTransitions.length > 0) {
-                                            const initialTarget = initialTransitions[0].target;
-                                            console.log(`[Debugger] Automatic initial transition from ${newState} to ${initialTarget}`);
-                                            
-                                            // Automatically apply the initial transition after entering the composite state
-                                            vscode.debug.activeDebugConsole.appendLine(`[stdl Debugger] Initial transition: '${newState}' --> '${initialTarget}'`);
-                                            
-                                            // Log the automatic initial transition
-                                            addLogEntry('state', `Initial transition to: ${initialTarget}`);
-                                            
-                                            // Update state to the target of the initial transition
-                                            currentState = initialTarget;
-                                            
-                                            // Log OnEntry actions for the initial state
-                                            const initialStateData = currentStateMachine?.states[initialTarget];
-                                            if (initialStateData && initialStateData.onEntry && initialStateData.onEntry.length > 0) {
-                                                initialStateData.onEntry.forEach((action: string) => {
-                                                    addLogEntry('entry', `OnEntry action: ${action}`);
-                                                    vscode.debug.activeDebugConsole.appendLine(`[stdl Debugger] Executing OnEntry action in initial state: ${action}`);
+                                    // THEN log OnExit actions from the current state and all parent states
+                                    if (currentStateMachine && response.newState && currentActionState) {
+                                        const newState = response.newState as string;
+                                        // Get the hierarchy of states from current to top
+                                        const currentStateHierarchy = getStateHierarchy(currentActionState);
+                                        const targetStateHierarchy = getStateHierarchy(newState);
+                                        
+                                        // Find the common ancestor
+                                        let commonAncestor = '';
+                                        for (let i = 0; i < Math.min(currentStateHierarchy.length, targetStateHierarchy.length); i++) {
+                                            if (currentStateHierarchy[i] !== targetStateHierarchy[i]) {
+                                                break;
+                                            }
+                                            commonAncestor = currentStateHierarchy[i];
+                                        }
+                                        
+                                        // Execute OnExit actions from the deepest state up to the common ancestor
+                                        for (let i = 0; i < currentStateHierarchy.length; i++) {
+                                            const stateName = currentStateHierarchy[i];
+                                            if (commonAncestor && stateName === commonAncestor) {
+                                                break; // Stop at the common ancestor
+                                            }
+                                            const stateData = currentStateMachine.states[stateName];
+                                            if (stateData && stateData.onExit && stateData.onExit.length > 0) {
+                                                addLogEntry('exit', `OnExit from ${stateName}:`);
+                                                stateData.onExit.forEach((exitAction: string) => {
+                                                    addLogEntry('exit', `OnExit action: ${exitAction}`);
+                                                    vscode.debug.activeDebugConsole.appendLine(`[stdl Debugger] Executing OnExit action from ${stateName}: ${exitAction}`);
                                                 });
                                             }
-                                            // TODO: Optionally reveal the initial state as well? Needs its range.
                                         }
+                                        
+                                        // Update state and log state transition
+                                        currentState = newState;
+                                        addLogEntry('state', `Transitioned to state: ${newState}`);
+
+                                        // Reveal and highlight the new state in the editor
+                                        if (targetRange) { // Check if the range was provided
+                                            revealStateInEditor(documentUri, targetRange); // Call reveal here
+                                        }
+                                        
+                                        // Log OnEntry actions for the new state and its hierarchy down from common ancestor
+                                        for (let i = targetStateHierarchy.indexOf(commonAncestor) + 1; i < targetStateHierarchy.length; i++) {
+                                            const entryStateName = targetStateHierarchy[i];
+                                            const entryStateData = currentStateMachine.states[entryStateName];
+                                            if (entryStateData && entryStateData.onEntry && entryStateData.onEntry.length > 0) {
+                                                addLogEntry('entry', `OnEntry to ${entryStateName}:`);
+                                                entryStateData.onEntry.forEach((action: string) => {
+                                                    addLogEntry('entry', `OnEntry action: ${action}`);
+                                                    vscode.debug.activeDebugConsole.appendLine(`[stdl Debugger] Executing OnEntry action to ${entryStateName}: ${action}`);
+                                                });
+                                            }
+                                        }
+
+                                        // Check for automatic Initial transition after OnEntry actions
+                                        const newStateData = currentStateMachine.states[newState];
+                                        if (newStateData && newStateData.transitions && newStateData.transitions['__initialTransition']) {
+                                            const initialTransitions = newStateData.transitions['__initialTransition'];
+                                            if (initialTransitions && initialTransitions.length > 0) {
+                                                const initialTarget = initialTransitions[0].target;
+                                                console.log(`[Debugger] Automatic initial transition from ${newState} to ${initialTarget}`);
+                                                
+                                                // Automatically apply the initial transition after entering the composite state
+                                                vscode.debug.activeDebugConsole.appendLine(`[stdl Debugger] Initial transition: '${newState}' --> '${initialTarget}'`);
+                                                
+                                                // Log the automatic initial transition
+                                                addLogEntry('state', `Initial transition to: ${initialTarget}`);
+                                                
+                                                // Update state to the target of the initial transition
+                                                currentState = initialTarget;
+                                                
+                                                // Log OnEntry actions for the initial state hierarchy
+                                                const initialHierarchy = getStateHierarchy(initialTarget);
+                                                const startIdx = targetStateHierarchy.indexOf(commonAncestor) + 1;
+                                                for (let i = startIdx; i < initialHierarchy.length; i++) {
+                                                    const initStateName = initialHierarchy[i];
+                                                    const initStateData = currentStateMachine.states[initStateName];
+                                                    if (initStateData && initStateData.onEntry && initStateData.onEntry.length > 0) {
+                                                        addLogEntry('entry', `OnEntry to ${initStateName}:`);
+                                                        initStateData.onEntry.forEach((action: string) => {
+                                                            addLogEntry('entry', `OnEntry action: ${action}`);
+                                                            vscode.debug.activeDebugConsole.appendLine(`[stdl Debugger] Executing OnEntry action in initial state ${initStateName}: ${action}`);
+                                                        });
+                                                    }
+                                                }
+                                                // TODO: Optionally reveal the initial state as well? Needs its range.
+                                            }
+                                        }
+                                        
+                                        updateWebviewContent();
                                     }
-                                    
-                                    updateWebviewContent();
+                                }
+                                
+                                // Helper function to get the hierarchy of states from a qualified state name
+                                function getStateHierarchy(stateName: string): string[] {
+                                    const parts = stateName.split('.');
+                                    const hierarchy: string[] = [];
+                                    for (let i = 0; i < parts.length; i++) {
+                                        const parentName = parts.slice(0, i + 1).join('.');
+                                        hierarchy.push(parentName);
+                                    }
+                                    return hierarchy;
                                 }
                             } else if (response && response.choices && response.choices.length > 0) {
                                 vscode.debug.activeDebugConsole.appendLine(`[stdl Debugger] Action '${actionName}' in state '${currentActionState}' resulted in choices (unexpected with guard).`);

@@ -1,0 +1,129 @@
+// Online Shopping Cart State Machine
+// States represent the different phases of the shopping process
+
+ShoppingFlow
+    Initial
+        -> BrowsingState
+    
+    // State for when the user is browsing items
+    BrowsingState
+        OnEntry
+            / LogUserActivity
+            / ShowRecommendations
+        
+        - AddToCart
+            / UpdateCartIcon
+            -> CartState
+        
+        - ViewCart [hasItems]
+            -> CartState
+        
+        - Logout
+            / ClearSession
+            -> LoggedOutState
+    
+    // State for when the user is viewing/modifying their cart
+    CartState
+        OnEntry
+            / LoadCartItems
+            / CalculateTotals
+        
+        OnExit
+            / SaveCartState
+        
+        - AddItem
+            / UpdateQuantity
+            / RecalculateTotal
+        
+        - RemoveItem
+            / RemoveFromCart
+            / RecalculateTotal
+            / CheckCartEmpty
+        
+        - RemoveItem [isLastItem]
+            / RemoveFromCart
+            / RecalculateTotal
+            -> BrowsingState
+        
+        - Checkout [cartNotEmpty]
+            / ValidateInventory
+            -> CheckoutState
+        
+        - ContinueShopping
+            -> BrowsingState
+            
+    // Checkout process state
+    CheckoutState
+        OnEntry
+            / ShowCheckoutForm
+            / ValidateCart
+        
+        Initial
+            -> ShippingInfoState
+        
+        // Nested states for the checkout process
+        ShippingInfoState
+            OnEntry
+                / LoadUserAddresses
+                / DisplayShippingForm
+            
+            - Next [shippingInfoValid]
+                / SaveShippingInfo
+                -> PaymentInfoState
+            
+            - Back
+                -> CartState
+        
+        PaymentInfoState
+            OnEntry
+                / LoadPaymentMethods
+                / DisplayPaymentForm
+            
+            - Next [paymentInfoValid]
+                / ValidatePaymentInfo
+                -> OrderReviewState
+            
+            - Back
+                -> ShippingInfoState
+        
+        OrderReviewState
+            OnEntry
+                / ShowOrderSummary
+                / CalculateFinalPrice
+            
+            - PlaceOrder [orderValid]
+                / ProcessPayment
+                / CreateOrder
+                -> OrderConfirmedState
+            
+            - EditPayment
+                -> PaymentInfoState
+            
+            - EditShipping
+                -> ShippingInfoState
+        
+        - CancelCheckout
+            -> CartState
+    
+    // Final state after order is completed
+    OrderConfirmedState
+        OnEntry
+            / DisplayConfirmation
+            / SendConfirmationEmail
+            / ClearCart
+        
+        - ContinueShopping
+            -> BrowsingState
+        
+        - ViewOrderStatus
+            / NavigateToOrders
+    
+    // State when user logs out
+    LoggedOutState
+        OnEntry
+            / DisplayLoginForm
+        
+        - Login [credentialsValid]
+            / AuthenticateUser
+            / LoadUserProfile
+            -> BrowsingState

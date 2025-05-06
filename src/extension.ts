@@ -1,6 +1,8 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { StdlDebugAdapterFactory, activateDebugger } from './debugger'; // Import activateDebugger
+import { generateMermaidStateDiagram } from './mermaidGenerator';
+import { StateMachineModel, StateNode, EventHandlerNode } from './server';
 import {
     LanguageClient,
     LanguageClientOptions,
@@ -26,10 +28,6 @@ interface StateData {
     transitions: { [event: string]: StateTransition[] };
 }
 
-interface StateMachine {
-    initialState: string;
-    states: { [stateName: string]: StateData };
-}
 
 let client: LanguageClient;
 
@@ -84,40 +82,18 @@ export async function activate(context: vscode.ExtensionContext) { // Make activ
 
         const uri = editor.document.uri.toString();
         try {
-            const stateMachine = await client.sendRequest<StateMachine>('stdl/getStateMachineModel', { uri });
+            const stateMachine = await client.sendRequest<any>('stdl/getStateMachineModel', { uri });
             if (!stateMachine || !stateMachine.states || Object.keys(stateMachine.states).length === 0) {
                 vscode.window.showErrorMessage('No state machine data available to display.');
                 return;
             }
 
-            // Generate Mermaid code for the state diagram
+            // Convert StateMachine to StateMachineModel (array of StateNode)
+            const stateMachineModel: StateMachineModel = convertToStateMachineModel(stateMachine);
+
+            // Generate Mermaid code for the state diagram using mermaidGenerator
             let mermaidCode = '---\nconfig:\n    layout: elk\n---\n';
-            mermaidCode += 'stateDiagram-v2\n';
-            mermaidCode += '    direction TB\n'; // Top to Bottom layout
-            for (const stateName in stateMachine.states) {
-                const state = stateMachine.states[stateName];
-                mermaidCode += `    state "${stateName}" as ${stateName.replace(/\./g, '_')}\n`;
-                for (const event in state.transitions) {
-                    if (event === '__initialTransition') continue; // Skip internal initial transitions for diagram
-                    state.transitions[event].forEach((transition: StateTransition) => {
-                        const target = transition.target.replace(/\./g, '_');
-                        const source = stateName.replace(/\./g, '_');
-                        let label = event;
-                        if (transition.guard) {
-                            label += ` [${transition.guard}]`;
-                        }
-                        if (transition.action) {
-                            label += ` / ${transition.action}`;
-                        }
-                        mermaidCode += `    ${source} --> ${target}: ${label}\n`;
-                    });
-                }
-            }
-            // Handle initial state
-            if (stateMachine.initialState) {
-                const initial = stateMachine.initialState.replace(/\./g, '_');
-                mermaidCode += `    [*] --> ${initial}\n`;
-            }
+            mermaidCode += generateMermaidStateDiagram(stateMachineModel);
 
             // Create a new text document with Mermaid code
             const document = await vscode.workspace.openTextDocument({
@@ -141,40 +117,18 @@ export async function activate(context: vscode.ExtensionContext) { // Make activ
         }
 
         try {
-            const stateMachine = await client.sendRequest<StateMachine>('stdl/getStateMachineModel', { uri: uri.toString() });
+            const stateMachine = await client.sendRequest<any>('stdl/getStateMachineModel', { uri: uri.toString() });
             if (!stateMachine || !stateMachine.states || Object.keys(stateMachine.states).length === 0) {
                 vscode.window.showErrorMessage('No state machine data available to display.');
                 return;
             }
 
-            // Generate Mermaid code for the state diagram
+            // Convert StateMachine to StateMachineModel (array of StateNode)
+            const stateMachineModel: StateMachineModel = convertToStateMachineModel(stateMachine);
+
+            // Generate Mermaid code for the state diagram using mermaidGenerator
             let mermaidCode = '---\nconfig:\n    layout: elk\n---\n';
-            mermaidCode += 'stateDiagram-v2\n';
-            mermaidCode += '    direction TB\n'; // Top to Bottom layout
-            for (const stateName in stateMachine.states) {
-                const state = stateMachine.states[stateName];
-                mermaidCode += `    state "${stateName}" as ${stateName.replace(/\./g, '_')}\n`;
-                for (const event in state.transitions) {
-                    if (event === '__initialTransition') continue; // Skip internal initial transitions for diagram
-                    state.transitions[event].forEach((transition: StateTransition) => {
-                        const target = transition.target.replace(/\./g, '_');
-                        const source = stateName.replace(/\./g, '_');
-                        let label = event;
-                        if (transition.guard) {
-                            label += ` [${transition.guard}]`;
-                        }
-                        if (transition.action) {
-                            label += ` / ${transition.action}`;
-                        }
-                        mermaidCode += `    ${source} --> ${target}: ${label}\n`;
-                    });
-                }
-            }
-            // Handle initial state
-            if (stateMachine.initialState) {
-                const initial = stateMachine.initialState.replace(/\./g, '_');
-                mermaidCode += `    [*] --> ${initial}\n`;
-            }
+            mermaidCode += generateMermaidStateDiagram(stateMachineModel);
 
             // Create a new text document with Mermaid code
             const document = await vscode.workspace.openTextDocument({
@@ -215,3 +169,85 @@ export function deactivate(): Thenable<void> | undefined {
     console.log('STDL extension deactivating.');
     return client.stop();
 }
+
+    // Function to convert StateMachine to StateMachineModel
+    function convertToStateMachineModel(stateMachine: any): StateMachineModel {
+        const model: StateMachineModel = [];
+        const stateMap = new Map<string, StateNode>();
+        const childMap = new Map<string, string[]>(); // parent -> children
+
+        // First pass: create all state nodes and map them
+        for (const stateName in stateMachine.states) {
+            const stateData = stateMachine.states[stateName];
+            const parts = stateName.split('.');
+            const node: StateNode = {
+                type: 'State',
+                name: parts[parts.length - 1],
+                range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } },
+                fullRange: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } },
+                onEntryActions: stateData.onEntry ? stateData.onEntry.map((action: string) => ({ type: 'Action', name: action, range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } } })) : [],
+                onExitActions: stateData.onExit ? stateData.onExit.map((action: string) => ({ type: 'Action', name: action, range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } } })) : [],
+                eventHandlers: [],
+                subStates: [],
+                indentation: parts.length - 1
+            };
+
+            // Build event handlers
+            for (const event in stateData.transitions) {
+                if (event === '__initialTransition') continue;
+                const transitions = stateData.transitions[event];
+                transitions.forEach((transition: any) => {
+                    const handler: EventHandlerNode = {
+                        type: 'EventHandler',
+                        event: event,
+                        guard: transition.guard,
+                        range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } },
+                        actions: transition.action ? [{ type: 'Action', name: transition.action, range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } } }] : [],
+                        transition: { type: 'Transition', targetStateName: transition.target.split('.').pop(), range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } } }
+                    };
+                    node.eventHandlers.push(handler);
+                });
+            }
+
+            stateMap.set(stateName, node);
+
+            // Track hierarchy
+            if (parts.length > 1) {
+                const parentName = parts.slice(0, -1).join('.');
+                if (!childMap.has(parentName)) {
+                    childMap.set(parentName, []);
+                }
+                childMap.get(parentName)!.push(stateName);
+            } else {
+                model.push(node);
+            }
+        }
+
+        // Second pass: build hierarchy
+        childMap.forEach((children, parentName) => {
+            const parentNode = stateMap.get(parentName);
+            if (parentNode) {
+                children.forEach(childName => {
+                    const childNode = stateMap.get(childName);
+                    if (childNode) {
+                        childNode.parent = parentNode;
+                        parentNode.subStates.push(childNode);
+                    }
+                });
+            }
+        });
+
+        // Set initial substate if available
+        for (const stateName in stateMachine.states) {
+            const stateData = stateMachine.states[stateName];
+            if (stateData.transitions && stateData.transitions['__initialTransition'] && stateData.transitions['__initialTransition'].length > 0) {
+                const node = stateMap.get(stateName);
+                if (node) {
+                    const target = stateData.transitions['__initialTransition'][0].target;
+                    node.initialSubStateName = target.split('.').pop();
+                }
+            }
+        }
+
+        return model;
+    }

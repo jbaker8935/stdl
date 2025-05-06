@@ -6,7 +6,7 @@
     "publisher": "jbaker8935",
     "license": "MIT",
     "licenseFile": "LICENSE.md",
-    "version": "0.1.2",
+    "version": "0.1.3",
     "engines": {
         "vscode": "^1.59.0"
     },

@@ -21,6 +21,8 @@ import {
     TextDocument
 } from 'vscode-languageserver-textdocument';
 
+import { generateMermaidStateDiagram } from './mermaidGenerator';
+
 // --- Tokenizer Types ---
 enum TokenType {
     STATE_DECLARATION,
@@ -811,6 +813,33 @@ connection.onInitialized(() => {
             return null;
         }
     });
+
+    connection.onRequest('stdl/getMermaidDiagram', async (params: { uri: string }): Promise<string | null> => {
+        const { uri } = params;
+        connection.console.log(`[Server] Received getMermaidDiagram request: uri=${uri}`);
+        
+        const document = documents.get(uri);
+        if (!document) {
+            connection.console.error(`[Server] Document not found for URI: ${uri}`);
+            return null;
+        }
+        
+        try {
+            // Parse the document to get the AST
+            const tokens = tokenize(document);
+            const parser = new Parser(tokens, document);
+            const { model: parsedModel } = parser.parse();
+            
+            // Generate Mermaid diagram from the model
+            const mermaidDiagram = generateMermaidStateDiagram(parsedModel);
+            connection.console.log(`[Server] Generated Mermaid diagram for URI: ${uri}`);
+            return mermaidDiagram;
+        } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            connection.console.error(`[Server] Error generating Mermaid diagram: ${errorMessage}`);
+            return null;
+        }
+    });
 });
 
 // --- Go to Definition Provider (Single Instance) ---
@@ -1101,17 +1130,31 @@ function transformModelForDebugger(model: StateNode[]): StateMachine | null {
                 const sourceNode = node;
                 const sourceQualifiedName = qualifiedName;
 
+                // Check if target is a substate of the source node
                 if (sourceNode.subStates.some((sub: StateNode) => sub.name === resolvedTargetName)) {
                     resolvedTargetName = `${sourceQualifiedName}.${resolvedTargetName}`;
-                } else if (sourceNode.parent) {
-                    const parentEntry = Array.from(localDefinedStatesDebug.entries()).find(([_, val]) => val.node === sourceNode.parent);
-                    const parentQualifiedName = parentEntry ? parentEntry[0] : null;
-                    if (parentQualifiedName && sourceNode.parent.subStates.some((sub: StateNode) => sub.name === resolvedTargetName)) {
-                        resolvedTargetName = `${parentQualifiedName}.${resolvedTargetName}`;
+                } else {
+                    // Traverse up the hierarchy to find the target state among siblings or higher
+                    let currentNode = sourceNode;
+                    let currentQualified = sourceQualifiedName;
+                    while (currentNode && !localDefinedStatesDebug.has(resolvedTargetName)) {
+                        if (currentNode.parent) {
+                            const parentEntry = Array.from(localDefinedStatesDebug.entries()).find(([_, val]) => val.node === currentNode.parent);
+                            const parentQualifiedName = parentEntry ? parentEntry[0] : null;
+                            if (parentQualifiedName && currentNode.parent.subStates.some((sub: StateNode) => sub.name === resolvedTargetName)) {
+                                resolvedTargetName = `${parentQualifiedName}.${resolvedTargetName}`;
+                                break;
+                            }
+                            currentNode = currentNode.parent;
+                            currentQualified = parentQualifiedName || '';
+                        } else {
+                            break;
+                        }
                     }
-                }
-                if (!localDefinedStatesDebug.has(resolvedTargetName) && localDefinedStatesDebug.has(handler.transition.targetStateName)) {
-                    resolvedTargetName = handler.transition.targetStateName;
+                    // If not found in hierarchy, check if it's a top-level state
+                    if (!localDefinedStatesDebug.has(resolvedTargetName) && localDefinedStatesDebug.has(handler.transition.targetStateName)) {
+                        resolvedTargetName = handler.transition.targetStateName;
+                    }
                 }
 
                 // Always include the actions with the transition
@@ -1380,17 +1423,31 @@ function performSemanticValidation(model: StateMachineModel, textDocument: TextD
         const sourceNode = transition.sourceNode;
         const sourceQualifiedName = transition.sourceQualifiedName;
 
+        // Check if target is a substate of the source node
         if (sourceNode.subStates.some((sub: StateNode) => sub.name === targetName)) {
             resolvedTargetName = `${sourceQualifiedName}.${targetName}`;
-        } else if (sourceNode.parent) {
-            const parentEntry = Array.from(statesMap.entries()).find(([_, val]) => val.node === sourceNode.parent);
-            const parentQualifiedName = parentEntry ? parentEntry[0] : null;
-            if (parentQualifiedName && sourceNode.parent.subStates.some((sub: StateNode) => sub.name === targetName)) {
-                resolvedTargetName = `${parentQualifiedName}.${targetName}`;
+        } else {
+            // Traverse up the hierarchy to find the target state among siblings or higher
+            let currentNode = sourceNode;
+            let currentQualified = sourceQualifiedName;
+            while (currentNode && !resolvedTargetName) {
+                if (currentNode.parent) {
+                    const parentEntry = Array.from(statesMap.entries()).find(([_, val]) => val.node === currentNode.parent);
+                    const parentQualifiedName = parentEntry ? parentEntry[0] : null;
+                    if (parentQualifiedName && currentNode.parent.subStates.some((sub: StateNode) => sub.name === targetName)) {
+                        resolvedTargetName = `${parentQualifiedName}.${targetName}`;
+                        break;
+                    }
+                    currentNode = currentNode.parent;
+                    currentQualified = parentQualifiedName || '';
+                } else {
+                    break;
+                }
             }
-        }
-        if (!resolvedTargetName && statesMap.has(targetName)) {
-            resolvedTargetName = targetName;
+            // If not found in hierarchy, check if it's a top-level state
+            if (!resolvedTargetName && statesMap.has(targetName)) {
+                resolvedTargetName = targetName;
+            }
         }
 
         if (!resolvedTargetName || !statesMap.has(resolvedTargetName)) {
