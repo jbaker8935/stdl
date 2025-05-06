@@ -211,6 +211,20 @@ export function activateDebugger(context: vscode.ExtensionContext, languageClien
                                 console.warn(`[SequenceDiagram] Transition to ${newState} found without preceding event log. Marked as [Implicit].`);
                             }
                             lastStateName = newState;
+                        } else if (messageType === 'Initial transition to') {
+                            const newState = messageContent;
+                            participants.add(newState);
+                            if (lastStateName) {
+                                elements.push({
+                                    index: i,
+                                    type: 'transition',
+                                    from: lastStateName,
+                                    to: newState,
+                                    event: '[Initial]',
+                                    actions: []
+                                });
+                            }
+                            lastStateName = newState;
                         }
                         break;
                     case 'event':
@@ -553,9 +567,9 @@ function createOrShowWebview(extensionUri: vscode.Uri, documentUri: string, subs
                                                 // Update state to the target of the initial transition
                                                 currentState = initialTarget;
                                                 
-                                                // Log OnEntry actions for the initial state hierarchy
+                                                // Log OnEntry actions for the initial state hierarchy, but only for states not already processed
                                                 const initialHierarchy = getStateHierarchy(initialTarget);
-                                                const startIdx = targetStateHierarchy.indexOf(commonAncestor) + 1;
+                                                const startIdx = targetStateHierarchy.length; // Start after the last state in target hierarchy to avoid duplicates
                                                 for (let i = startIdx; i < initialHierarchy.length; i++) {
                                                     const initStateName = initialHierarchy[i];
                                                     const initStateData = currentStateMachine.states[initStateName];

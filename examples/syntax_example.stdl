@@ -1,39 +1,39 @@
 State
     OnEntry
-        / Action
+        / Action A
     - Event B [Condition A]
-        / Action
+        / Action B
         -> State 2
     - Event B [Condition B]
-        / Action
+        / Action C
         -> State 3
 
 State 2
     OnEntry
-        / Action
+        / Action D
     OnExit
-        / Action
+        / Action E
     - Event C
-        / Action
+        / Action F
         -> State
 State 3
     - Event D
-        / Action
+        / Action G
         -> State Meta
 
 State Meta
     OnEntry
-        / Action
+        / Action H
     Initial // Define the initial substate for Meta
         -> SubState
 
     SubState
         - Event E
-            / Action
+            / Action I
             -> SubState 2
         - Event F
     SubState 2
         - Event G
-            / Action
+            / Action J
             -> State
 
