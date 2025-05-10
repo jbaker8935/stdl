@@ -1,0 +1,66 @@
+// Strategy Game Resource Model State Machine
+
+ResourceModel
+    Initial
+        -> Idle
+
+    Idle
+        OnEntry
+            / DisplayResourceStats
+
+        - StartGathering
+            -> Gathering
+
+        - UpgradeResourceBuilding [canUpgrade]
+            / ShowUpgradeMenu
+            -> Upgrading
+
+    Gathering
+        OnEntry
+            / AssignWorkers
+            / StartResourceTimer
+
+        - GatherTick
+            / AddResources
+
+        - ResourceFull [storageFull]
+            / StopResourceTimer
+            -> Idle
+
+        - EnemyAttack
+            / PauseGathering
+            -> UnderAttack
+
+        - StopGathering
+            / RemoveWorkers
+            -> Idle
+
+    Upgrading
+        OnEntry
+            / BeginUpgrade
+            / DeductUpgradeCost
+
+        - UpgradeComplete
+            / IncreaseResourceRate
+            -> Idle
+
+        - CancelUpgrade
+            / RefundUpgradeCost
+            -> Idle
+
+    UnderAttack
+        OnEntry
+            / AlertPlayer
+            / PauseResourceTimers
+
+        - DefendSuccess
+            / ResumeGathering
+            -> Gathering
+
+        - DefendFail
+            / LoseResources
+            -> Idle
+
+        - Retreat
+            / RemoveWorkers
+            -> Idle

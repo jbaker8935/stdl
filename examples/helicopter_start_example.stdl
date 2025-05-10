@@ -1,0 +1,98 @@
+// AH-64 Apache Startup Sequence State Machine
+
+ApacheStartup
+    Initial
+        -> PreStart
+
+    PreStart
+        OnEntry
+            / PerformWalkaround
+            / CheckAircraftForms
+
+        - PowerOn
+            / BatteryOn
+            / InverterOn
+            -> CockpitPrep
+
+    CockpitPrep
+        OnEntry
+            / SetParkingBrake
+            / SetFuelSelectors
+            / SetAPUControls
+
+        - APUStart
+            / StartAPU
+            -> APUStarted
+
+    APUStarted
+        OnEntry
+            / MonitorAPU
+            / CheckAPUIndicators
+
+        - APUReady [apuGreenLight]
+            / APUGeneratorOn
+            -> EngineStartPrep
+
+    EngineStartPrep
+        OnEntry
+            / SetEngineStartSwitches
+            / CheckEngineInstruments
+
+        - StartLeftEngine
+            / StartLeftEngineSequence
+            -> LeftEngineStarting
+
+        - StartRightEngine
+            / StartRightEngineSequence
+            -> RightEngineStarting
+
+    LeftEngineStarting
+        OnEntry
+            / MonitorLeftEngineStart
+
+        - LeftEngineStabilized [leftEngineStable]
+            / SetLeftEngineIdle
+            -> RightEngineStartReady
+
+    RightEngineStartReady
+        OnEntry
+            / ConfirmLeftEngineIdle
+
+        - StartRightEngine
+            / StartRightEngineSequence
+            -> RightEngineStarting
+
+    RightEngineStarting
+        OnEntry
+            / MonitorRightEngineStart
+
+        - RightEngineStabilized [rightEngineStable]
+            / SetRightEngineIdle
+            -> SystemsCheck
+
+    SystemsCheck
+        OnEntry
+            / CheckHydraulics
+            / CheckFlightControls
+            / CheckAvionics
+
+        - AllSystemsGo [systemsNominal]
+            / CompleteStartupChecklist
+            -> ReadyForTaxi
+
+    ReadyForTaxi
+        OnEntry
+            / ReleaseParkingBrake
+            / NotifyATC
+            / TaxiToRunway
+
+        - Abort
+            / ShutdownSequence
+            -> Shutdown
+
+    Shutdown
+        OnEntry
+            / EnginesOff
+            / APUOff
+            / BatteryOff
+            / CompleteShutdownChecklist

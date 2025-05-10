@@ -1,0 +1,162 @@
+// Enterprise Account Management and Billing State Machine
+
+AccountManagement
+    Initial
+        -> Unauthenticated
+
+    // User is not logged in
+    Unauthenticated
+        OnEntry
+            / ShowLoginScreen
+
+        - Login [credentialsValid]
+            / AuthenticateUser
+            -> Authenticated
+
+        - Register
+            / ShowRegistrationForm
+            -> Registration
+
+    // Registration process
+    Registration
+        OnEntry
+            / ShowRegistrationForm
+
+        - SubmitRegistration [registrationValid]
+            / CreateAccount
+            -> AwaitingEmailVerification
+
+        - Cancel
+            -> Unauthenticated
+
+    AwaitingEmailVerification
+        OnEntry
+            / SendVerificationEmail
+            / ShowVerificationPrompt
+
+        - VerifyEmail [verificationCodeValid]
+            / ActivateAccount
+            -> Authenticated
+
+        - ResendVerification
+            / SendVerificationEmail
+
+        - Cancel
+            -> Unauthenticated
+
+    // User is logged in
+    Authenticated
+        OnEntry
+            / LoadUserProfile
+            / ShowDashboard
+
+        - Logout
+            / ClearSession
+            -> Unauthenticated
+
+        - ManageAccount
+            -> AccountSettings
+
+        - ViewBilling
+            -> Billing
+
+        - AdminPanel [isAdmin]
+            -> AdminDashboard
+
+    // Account settings
+    AccountSettings
+        OnEntry
+            / ShowAccountSettings
+
+        - UpdateProfile [profileValid]
+            / SaveProfileChanges
+
+        - ChangePassword [passwordValid]
+            / UpdatePassword
+
+        - DeleteAccount [confirmDelete]
+            / RemoveAccount
+            -> Unauthenticated
+
+        - Back
+            -> Authenticated
+
+    // Billing and subscription management
+    Billing
+        OnEntry
+            / LoadBillingInfo
+            / ShowBillingDashboard
+
+        - AddPaymentMethod
+            / ShowAddPaymentForm
+
+        - RemovePaymentMethod [hasPaymentMethod]
+            / RemovePaymentMethod
+
+        - UpgradePlan [planSelected]
+            / ProcessUpgrade
+            -> PaymentProcessing
+
+        - DowngradePlan [planSelected]
+            / ProcessDowngrade
+
+        - ViewInvoices
+            -> Invoices
+
+        - Back
+            -> Authenticated
+
+    PaymentProcessing
+        OnEntry
+            / ProcessPayment
+
+        - PaymentSuccess
+            / UpdateSubscription
+            -> Billing
+
+        - PaymentFailure
+            / ShowPaymentError
+            -> Billing
+
+    Invoices
+        OnEntry
+            / LoadInvoices
+            / ShowInvoices
+
+        - DownloadInvoice [invoiceAvailable]
+            / DownloadInvoicePDF
+
+        - Back
+            -> Billing
+
+    // Admin dashboard for enterprise admins
+    AdminDashboard
+        OnEntry
+            / LoadAdminData
+            / ShowAdminPanel
+
+        - ManageUsers
+            -> UserManagement
+
+        - ViewReports
+            / ShowReports
+
+        - Back
+            -> Authenticated
+
+    UserManagement
+        OnEntry
+            / LoadUserList
+            / ShowUserManagement
+
+        - AddUser
+            / ShowAddUserForm
+
+        - RemoveUser [userSelected]
+            / RemoveUser
+
+        - ResetUserPassword [userSelected]
+            / ResetPassword
+
+        - Back
+            -> AdminDashboard
